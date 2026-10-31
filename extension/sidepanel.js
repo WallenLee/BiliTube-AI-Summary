@@ -131,6 +131,30 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+function showToast(message, duration = 2400) {
+  let toast = document.getElementById("bilitube-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "bilitube-toast";
+    toast.className = "bilitube-toast hidden";
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML = message;
+  toast.classList.remove("hidden");
+  void toast.offsetWidth; // Force layout reflow
+  toast.classList.add("show");
+
+  if (window._toastTimer) clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => {
+      if (!toast.classList.contains("show")) {
+        toast.classList.add("hidden");
+      }
+    }, 280);
+  }, duration);
+}
+
 async function saveSessionState() {
   try {
     if (!storageArea) return;
@@ -974,9 +998,9 @@ async function openSavedLocalDocument(filePath) {
     console.warn("Open file locally fallback:", err);
     if (navigator.clipboard) {
       navigator.clipboard.writeText(targetPath);
-      alert(`已成功复制文件完整路径到剪贴板：\n${targetPath}\n\n您可直接在本地默认编辑器中打开。`);
+      showToast("📋 已复制文件路径到剪贴板，可直接在编辑器中打开");
     } else {
-      alert(`文档已保存至：\n${targetPath}`);
+      showToast(`文档路径：${targetPath}`);
     }
   }
 }
@@ -1094,7 +1118,7 @@ async function confirmExportMarkdown() {
       updateSaveButtonsState();
 
       const actionDesc = isUpdating ? "更新覆盖" : "保存";
-      alert(`✅ 成功${actionDesc}为 Markdown 文档！\n\n文件路径：\n${data.file_path}${selectedIndices.length > 0 ? `\n（已包含 ${selectedIndices.length} 组伴读问答记录）` : ''}`);
+      showToast(`✅ 已成功${actionDesc}为 Markdown 文档${selectedIndices.length > 0 ? ` (含 ${selectedIndices.length} 组问答)` : ''}`);
     } else {
       alert("保存失败: " + (data.message || "未知错误"));
     }
@@ -1934,7 +1958,7 @@ async function saveSettings() {
       body: JSON.stringify(newCfg)
     });
     if (res.ok) {
-      alert("配置已成功更新并生效！");
+      showToast("✅ 配置已成功更新并生效！");
       settingsModal.classList.add("hidden");
     }
   } catch (e) {
