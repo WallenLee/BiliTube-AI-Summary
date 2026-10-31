@@ -474,11 +474,13 @@ circle.markmap-node {
 }
 
 /* Light Theme Mode for Markmap (Toggleable) */
-.markmap-wrapper.light-theme {
+.markmap-wrapper.light-theme,
+body.light-theme .markmap-wrapper {
   background-color: #f8fafc !important;
 }
 
-.markmap-wrapper.light-theme .markmap-node foreignObject div {
+.markmap-wrapper.light-theme .markmap-node foreignObject div,
+body.light-theme .markmap-wrapper .markmap-node foreignObject div {
   color: #0f172a !important; /* Crisp dark navy text */
   background: rgba(255, 255, 255, 0.95) !important;
   border: 1px solid rgba(148, 163, 184, 0.45) !important;
@@ -486,11 +488,13 @@ circle.markmap-node {
   text-shadow: none !important;
 }
 
-.markmap-wrapper.light-theme .markmap-node foreignObject div strong {
+.markmap-wrapper.light-theme .markmap-node foreignObject div strong,
+body.light-theme .markmap-wrapper .markmap-node foreignObject div strong {
   color: #2563eb !important;
 }
 
-.markmap-wrapper.light-theme .markmap-node[data-depth="0"] foreignObject div {
+.markmap-wrapper.light-theme .markmap-node[data-depth="0"] foreignObject div,
+body.light-theme .markmap-wrapper .markmap-node[data-depth="0"] foreignObject div {
   color: #ffffff !important;
   background: linear-gradient(135deg, #4f46e5, #6366f1) !important;
 }
@@ -1343,4 +1347,414 @@ circle.markmap-node {
 .logs-status-hint {
   font-size: 10.5px;
   color: var(--accent-sky);
+}
+
+/* ========================================================
+   ☀️ Global Light Theme Mode (全界面明亮模式)
+   ======================================================== */
+body.light-theme {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --border-color: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --accent-primary: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-sky: #0284c7;
+  --accent-success: #059669;
+  --accent-error: #dc2626;
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Header & Icon Buttons */
+body.light-theme .app-header {
+  border-bottom-color: #e2e8f0;
+}
+
+body.light-theme .brand-info h1 {
+  color: #0f172a;
+}
+
+body.light-theme .icon-btn {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+body.light-theme .icon-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+/* Video Card & Information */
+body.light-theme .video-card {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+body.light-theme .video-title {
+  color: #0f172a;
+}
+
+body.light-theme .video-url {
+  color: #64748b;
+}
+
+/* Action Buttons */
+body.light-theme .secondary-btn {
+  background: #ecfdf5;
+  color: #059669;
+  border-color: #a7f3d0;
+}
+
+body.light-theme .secondary-btn:hover:not(:disabled) {
+  background: #d1fae5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+body.light-theme .ghost-btn {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+body.light-theme .ghost-btn:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
+}
+
+/* View Navigation Tabs */
+body.light-theme .view-tabs {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+body.light-theme .tab-btn {
+  color: #475569;
+}
+
+body.light-theme .tab-btn.active {
+  background: #ffffff;
+  color: #4338ca;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Content Body Container */
+body.light-theme .content-body {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+body.light-theme .empty-state .empty-title {
+  color: #0f172a;
+}
+
+body.light-theme .empty-state .empty-desc {
+  color: #64748b;
+}
+
+/* Toolbars */
+body.light-theme .toolbar,
+body.light-theme .doc-actions-bar,
+body.light-theme .transcript-toolbar {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+
+body.light-theme .toolbar-hint {
+  color: #64748b;
+}
+
+body.light-theme .small-btn {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #334155;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+body.light-theme .small-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+body.light-theme .small-btn.highlight {
+  background: #e0e7ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+}
+
+/* Document Markdown View */
+body.light-theme .markdown-body {
+  color: #334155;
+}
+
+body.light-theme .markdown-body h1 {
+  color: #0f172a;
+  border-bottom-color: #e2e8f0;
+}
+
+body.light-theme .markdown-body h2 {
+  color: #0284c7;
+}
+
+body.light-theme .markdown-body p,
+body.light-theme .markdown-body li {
+  color: #334155;
+}
+
+body.light-theme .markdown-body strong {
+  color: #0f172a;
+}
+
+body.light-theme .markdown-body code {
+  background: #f1f5f9;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+}
+
+body.light-theme .timestamp-pill {
+  background: rgba(2, 132, 199, 0.1);
+  color: #0284c7;
+  border-color: rgba(2, 132, 199, 0.3);
+}
+
+body.light-theme .timestamp-pill:hover {
+  background: #0284c7;
+  color: #ffffff;
+}
+
+/* Subtitle / Transcript View */
+body.light-theme .search-input {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+body.light-theme .badge {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+body.light-theme .transcript-row {
+  background: #f8fafc;
+  border-color: #f1f5f9;
+}
+
+body.light-theme .transcript-row:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+body.light-theme .transcript-text {
+  color: #1e293b;
+}
+
+/* Q&A Chat View */
+body.light-theme #chat-view {
+  background: #ffffff;
+}
+
+body.light-theme .chat-welcome {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+body.light-theme .chat-welcome-title {
+  color: #0f172a;
+}
+
+body.light-theme .chat-welcome-desc {
+  color: #64748b;
+}
+
+body.light-theme .quick-pill {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+body.light-theme .quick-pill:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0284c7;
+}
+
+body.light-theme .chat-msg.assistant {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #1e293b;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+}
+
+body.light-theme .chat-msg.assistant strong {
+  color: #0284c7;
+}
+
+body.light-theme .chat-msg.assistant code {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+body.light-theme .chat-input-wrapper {
+  background: rgba(255, 255, 255, 0.95);
+  border-top-color: #e2e8f0;
+}
+
+body.light-theme #chat-input {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+body.light-theme #chat-input:focus {
+  background: #ffffff;
+  border-color: #0284c7;
+}
+
+body.light-theme .chat-quote-bar {
+  background: rgba(2, 132, 199, 0.08);
+  border-left-color: #0284c7;
+  color: #0284c7;
+}
+
+body.light-theme .quote-text {
+  color: #334155;
+}
+
+/* Floating Selection Popover */
+body.light-theme .selection-popover {
+  background: #ffffff;
+  border-color: #0284c7;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 0 10px rgba(2, 132, 199, 0.2);
+}
+
+body.light-theme .pop-btn {
+  color: #334155;
+}
+
+body.light-theme .pop-btn:hover {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+body.light-theme .pop-divider {
+  background: #e2e8f0;
+}
+
+/* Modals (Settings & Logs) */
+body.light-theme .modal {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+body.light-theme .modal-content {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  color: #0f172a;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+}
+
+body.light-theme .modal-header {
+  border-bottom-color: #e2e8f0;
+}
+
+body.light-theme .modal-footer {
+  border-top-color: #e2e8f0;
+}
+
+body.light-theme .form-group label {
+  color: #0f172a;
+}
+
+body.light-theme .form-group input,
+body.light-theme .form-group select {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+body.light-theme .form-group small {
+  color: #64748b;
+}
+
+body.light-theme .checkbox-group label {
+  color: #334155;
+}
+
+body.light-theme .browse-btn {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0284c7;
+}
+
+body.light-theme .small-action-btn {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+body.light-theme .small-action-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+body.light-theme .service-control-group {
+  border-top-color: #e2e8f0;
+}
+
+body.light-theme .restart-hint {
+  color: #64748b;
+}
+
+/* Logs Modal Terminal */
+body.light-theme .logs-body {
+  background: #f8fafc;
+  border-top-color: #e2e8f0;
+  border-bottom-color: #e2e8f0;
+  color: #334155;
+}
+
+body.light-theme .logs-footer {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+body.light-theme .auto-scroll-label {
+  color: #64748b;
+}
+
+body.light-theme .log-row {
+  color: #334155;
+}
+
+body.light-theme .log-time {
+  color: #94a3b8;
+}
+
+body.light-theme .log-row.log-info .log-msg {
+  color: #1e293b;
+}
+
+body.light-theme .log-row.log-success .log-msg {
+  color: #059669;
+}
+
+body.light-theme .log-row.log-error .log-msg {
+  color: #dc2626;
+}
+
+body.light-theme .log-row.log-gemini .log-msg {
+  color: #0284c7;
+}
+
+body.light-theme .log-row.log-warn .log-msg {
+  color: #d97706;
 }

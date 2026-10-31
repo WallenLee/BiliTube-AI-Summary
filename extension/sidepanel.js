@@ -854,21 +854,41 @@ tabButtons.forEach((btn) => {
   });
 });
 
-// Theme Toggle (Dark / Light)
-let isLightTheme = false;
+// Global Theme Toggle (Dark / Light) with Persistence
+const THEME_STORAGE_KEY = "BILITUBE_THEME_MODE";
+let currentTheme = "dark";
+
+function applyTheme(themeName) {
+  currentTheme = themeName === "light" ? "light" : "dark";
+  if (currentTheme === "light") {
+    document.body.classList.add("light-theme");
+    if (btnThemeToggle) {
+      btnThemeToggle.textContent = "☀️";
+      btnThemeToggle.title = "当前为浅色主题 (点击切回深色)";
+    }
+  } else {
+    document.body.classList.remove("light-theme");
+    if (btnThemeToggle) {
+      btnThemeToggle.textContent = "🌓";
+      btnThemeToggle.title = "当前为深色主题 (点击切换浅色)";
+    }
+  }
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
+  } catch (e) {}
+}
+
+function initTheme() {
+  let savedTheme = "dark";
+  try {
+    savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "dark";
+  } catch (e) {}
+  applyTheme(savedTheme);
+}
+
 if (btnThemeToggle) {
   btnThemeToggle.addEventListener("click", () => {
-    isLightTheme = !isLightTheme;
-    const wrapper = document.querySelector(".markmap-wrapper");
-    if (wrapper) {
-      if (isLightTheme) {
-        wrapper.classList.add("light-theme");
-        btnThemeToggle.textContent = "☀️ 浅色底 (点击切深色)";
-      } else {
-        wrapper.classList.remove("light-theme");
-        btnThemeToggle.textContent = "🌙 深色底 (点击切浅色)";
-      }
-    }
+    applyTheme(currentTheme === "light" ? "dark" : "light");
   });
 }
 
@@ -1612,6 +1632,7 @@ if (btnRefreshLogs) {
 }
 
 // Init
+initTheme();
 checkServiceHealth();
 detectCurrentVideoTab();
 restoreSessionState();
