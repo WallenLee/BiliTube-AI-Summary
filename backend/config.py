@@ -10,6 +10,8 @@ DEFAULT_CONFIG = {
     "proxy_url": "http://127.0.0.1:7897",
     "save_directory": os.path.normpath(os.path.expanduser("~/Documents/VideoSummaries")),
     "auto_save": False,
+    "font_scale": 1.0,
+    "theme_mode": "dark",
     "sensevoice_bin": "",
     "sensevoice_model": "",
     "vad_model": "",

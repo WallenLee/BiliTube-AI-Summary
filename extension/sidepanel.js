@@ -863,7 +863,7 @@ tabButtons.forEach((btn) => {
   });
 });
 
-// Global Theme Toggle (Dark / Light) with Persistence
+// Global Theme Toggle (Dark / Light) with Guaranteed Multi-Layer Persistence
 const THEME_STORAGE_KEY = "BILITUBE_THEME_MODE";
 let currentTheme = "dark";
 
@@ -882,17 +882,36 @@ function applyTheme(themeName) {
       btnThemeToggle.title = "当前为深色主题 (点击切换浅色)";
     }
   }
+
+  // Layer 1: Synchronous localStorage
   try {
     localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
   } catch (e) {}
+
+  // Layer 2: Official Chrome Extension storage (guaranteed across browser restarts)
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    try {
+      chrome.storage.local.set({ [THEME_STORAGE_KEY]: currentTheme });
+    } catch (e) {}
+  }
 }
 
 function initTheme() {
   let savedTheme = "dark";
+  // 1. Fast synchronous restore to prevent initial flashing
   try {
     savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "dark";
   } catch (e) {}
   applyTheme(savedTheme);
+
+  // 2. Guaranteed restore from chrome.storage.local (restarts / profile restores)
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get([THEME_STORAGE_KEY], (res) => {
+      if (res && res[THEME_STORAGE_KEY] && res[THEME_STORAGE_KEY] !== currentTheme) {
+        applyTheme(res[THEME_STORAGE_KEY]);
+      }
+    });
+  }
 }
 
 if (btnThemeToggle) {
@@ -901,12 +920,13 @@ if (btnThemeToggle) {
   });
 }
 
-// Global Stepless Font Scaling with Ctrl + Mouse Wheel & Persistence
+// Global Stepless Font Scaling with Ctrl + Mouse Wheel & Guaranteed Multi-Layer Persistence
 const FONT_SCALE_STORAGE_KEY = "BILITUBE_FONT_SCALE";
 const MIN_FONT_SCALE = 0.75;
 const MAX_FONT_SCALE = 2.0;
 let currentFontScale = 1.0;
 let hudTimeout = null;
+let backendFontSyncTimer = null;
 
 function showFontScaleHud(percentStr) {
   if (!fontScaleHud || !fontScaleText) return;
@@ -916,6 +936,19 @@ function showFontScaleHud(percentStr) {
   hudTimeout = setTimeout(() => {
     fontScaleHud.classList.add("hidden");
   }, 1200);
+}
+
+function syncFontScaleToBackend(scale) {
+  if (backendFontSyncTimer) clearTimeout(backendFontSyncTimer);
+  backendFontSyncTimer = setTimeout(async () => {
+    try {
+      await fetch(`${API_BASE}/api/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ font_scale: scale, theme_mode: currentTheme })
+      });
+    } catch (e) {}
+  }, 1000);
 }
 
 function applyFontScale(scale, showHud = true) {
@@ -932,9 +965,20 @@ function applyFontScale(scale, showHud = true) {
     showFontScaleHud(percentStr);
   }
 
+  // Layer 1: Synchronous localStorage cache (immediate 0ms restoration)
   try {
     localStorage.setItem(FONT_SCALE_STORAGE_KEY, currentFontScale.toString());
   } catch (e) {}
+
+  // Layer 2: Official Chrome Extension storage (guaranteed survival across browser restarts)
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    try {
+      chrome.storage.local.set({ [FONT_SCALE_STORAGE_KEY]: currentFontScale });
+    } catch (e) {}
+  }
+
+  // Layer 3: Backend disk config persistence
+  syncFontScaleToBackend(currentFontScale);
 
   // Trigger markmap layout refit if active
   if (markmapInstance && markmapViewEl && !markmapViewEl.classList.contains("hidden")) {
@@ -949,11 +993,24 @@ function applyFontScale(scale, showHud = true) {
 
 function initFontScale() {
   let saved = "1.0";
+  // 1. Immediate sync restore from localStorage
   try {
     saved = localStorage.getItem(FONT_SCALE_STORAGE_KEY) || "1.0";
   } catch (e) {}
   const scale = parseFloat(saved) || 1.0;
   applyFontScale(scale, false);
+
+  // 2. Guaranteed async restore from chrome.storage.local across browser restarts
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get([FONT_SCALE_STORAGE_KEY], (res) => {
+      if (res && res[FONT_SCALE_STORAGE_KEY]) {
+        const localScale = parseFloat(res[FONT_SCALE_STORAGE_KEY]);
+        if (!isNaN(localScale) && localScale !== currentFontScale) {
+          applyFontScale(localScale, false);
+        }
+      }
+    });
+  }
 }
 
 // Wheel listener on window: Ctrl + Mouse Wheel for stepless continuous scaling
@@ -1469,6 +1526,13 @@ async function loadSettings() {
       document.getElementById("cfg-proxy").value = cfg.proxy_url || "http://127.0.0.1:7897";
       cfgSaveDirInput.value = cfg.save_directory || "";
       document.getElementById("cfg-auto-save").checked = cfg.auto_save === true;
+      if (cfg.font_scale) {
+        const val = parseFloat(cfg.font_scale);
+        if (!isNaN(val)) applyFontScale(val, false);
+      }
+      if (cfg.theme_mode) {
+        applyTheme(cfg.theme_mode);
+      }
     }
   } catch (e) {
     console.warn("Could not load settings:", e);
@@ -1502,7 +1566,9 @@ async function saveSettings() {
     gemini_model: document.getElementById("cfg-model").value,
     proxy_url: document.getElementById("cfg-proxy").value.trim(),
     save_directory: cfgSaveDirInput.value.trim(),
-    auto_save: document.getElementById("cfg-auto-save").checked
+    auto_save: document.getElementById("cfg-auto-save").checked,
+    font_scale: currentFontScale,
+    theme_mode: currentTheme
   };
 
   try {

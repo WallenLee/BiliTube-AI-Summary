@@ -92,6 +92,8 @@ class ConfigRequest(BaseModel):
     proxy_url: Optional[str] = None
     save_directory: Optional[str] = None
     auto_save: Optional[bool] = None
+    font_scale: Optional[float] = None
+    theme_mode: Optional[str] = None
 
 class OpenFileRequest(BaseModel):
     file_path: str
