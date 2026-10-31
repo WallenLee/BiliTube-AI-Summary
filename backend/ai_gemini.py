@@ -74,8 +74,9 @@ def build_chat_prompt(
 
 ---
 【回答原则与要求】
-1. **忠实原片与通俗拓展结合**：
-   - 优先依据原片作者的论述因果、推演逻辑与事实数据作答；
+1. **忠实原片与同行评审双重视角**：
+   - 优先依据原片作者的论述因果、推演逻辑与事实数据展开透彻剖析；
+   - **【事实边界与同行评审核验】**：若原片中涉及的某些观点、数据或结论存在明显的夸大、科学常识漏洞、偷换概念、以偏概全或已被权威学术界/官方明确证伪，必须在忠实解释原片逻辑的同时，主动、客观地标注其【事实边界与主流公认结论】（指出其前提漏洞或关键反例），帮助用户建立全面清醒的批判性认知，避免被片面信息误导；
    - 若用户询问专业概念，请提供准确定义并结合日常生活中的生动案例进行白话比喻，降低理解门槛；
    - 若用户询问观点是否有漏洞、局限或反方意见，请客观中立地分析其前提假设与边界。
 2. **精准时间戳溯源**：
@@ -108,8 +109,22 @@ def stream_gemini_chat(prompt: str, model: str = None):
     if not api_key:
         raise ValueError("Gemini API Key 未配置，请在设置中输入 API Key")
 
-    chain = [primary_model]
-    for backup in ['gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.8-flash']:
+    # 按照模型性能强度梯队构建容灾链：首选优先，503 繁忙时按性能梯队依次接班
+    candidate_order = [
+        'gemini-3.5-flash-lite',  # 用户指定首选：极速且配额高达 15 RPM / 500 RPD
+        'gemini-3.8-flash',       # 梯队一：当前 3.x Flash 序列中顶级推理旗舰
+        'gemini-3.6-flash',       # 梯队二：高推理性能兼具极高实测稳定性 (HTTP 200)
+        'gemini-3.5-flash',       # 梯队三：3.5 代全量主力 Flash，深度稳定
+        'gemini-3-flash-preview', # 梯队四：3.0 代基石 Flash 模型，稳固在线
+        'gemini-3.1-flash-lite'   # 梯队五：3.1 代轻量高配额 (15 RPM) 快速兜底
+    ]
+
+    if primary_model and primary_model != 'gemini-3.5-flash-lite':
+        chain = ['gemini-3.5-flash-lite', primary_model]
+    else:
+        chain = ['gemini-3.5-flash-lite']
+
+    for backup in candidate_order:
         if backup not in chain:
             chain.append(backup)
 
@@ -178,9 +193,22 @@ def call_gemini_api(prompt: str, model: str = None, progress_callback=None) -> s
     if not api_key:
         raise ValueError("Gemini API Key 未配置，请在设置中输入 API Key")
 
-    # 构建容灾降级模型链：首选模型优先，遇 503 高峰排队时自动秒切备选池
-    chain = [primary_model]
-    for backup in ['gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest']:
+    # 按照模型性能强度梯队构建容灾降级模型链：首选优先，503 繁忙时按性能梯队依次接班
+    candidate_order = [
+        'gemini-3.5-flash-lite',  # 用户指定首选：极速且配额高达 15 RPM / 500 RPD
+        'gemini-3.8-flash',       # 梯队一：当前 3.x Flash 序列中顶级推理旗舰
+        'gemini-3.6-flash',       # 梯队二：高推理性能兼具极高实测稳定性 (HTTP 200)
+        'gemini-3.5-flash',       # 梯队三：3.5 代全量主力 Flash，深度稳定
+        'gemini-3-flash-preview', # 梯队四：3.0 代基石 Flash 模型，稳固在线
+        'gemini-3.1-flash-lite'   # 梯队五：3.1 代轻量高配额 (15 RPM) 快速兜底
+    ]
+
+    if primary_model and primary_model != 'gemini-3.5-flash-lite':
+        chain = ['gemini-3.5-flash-lite', primary_model]
+    else:
+        chain = ['gemini-3.5-flash-lite']
+
+    for backup in candidate_order:
         if backup not in chain:
             chain.append(backup)
 
@@ -296,14 +324,23 @@ source: "{sub_source}"
       * **【术语二名称】**（若有）：
         * **专业定义**：...
         * **通俗解读**：...
+  * **事实边界与同行评审**（严格按需输出，若原片论述客观中立无明显漏洞则【完全不写此项】）：
+    【核验规则】：
+    - 仅当原片该论点存在明显的伪科学、夸大其词、偷换概念、以偏概全或已被权威官方明确证伪时，才输出此栏！
+    - 若有，以严谨客观的同行评审视角标注：
+      * **存疑/争议点**：原片哪项表述存在事实瑕疵或因果推论过度？
+      * **公认事实与认知边界**：主流学术界/行业权威公认事实或关键反例是什么？
+    - 若原片论述严谨扎实、无明显科学漏洞或事实扭曲，则【严禁输出此栏】，绝不无端挑刺！
 
 * **2. 【核心论点概括】**
   * **原片讲述逻辑**：（同样按“背景与痛点 ➔ 推演脉络与机制（含事实案例与数据论据）”完整详尽展开）
   * **术语解析**（有则全列，无则不写）：...
+  * **事实边界与同行评审**（有争议则批注，无争议则不写）：...
 
 * **3. 【核心论点概括】**
   * **原片讲述逻辑**：（同样按“背景与痛点 ➔ 推演脉络与机制（含事实案例与数据论据）”完整详尽展开）
   * **术语解析**（有则全列，无则不写）：...
+  * **事实边界与同行评审**（有争议则批注，无争议则不写）：...
 
 ## 🧠 脉络思维导图
 （深度融合全片时序进展与逻辑层次，将时间线与思维导图合二为一。格式严格包裹在 ```markmap 和 ``` 代码块中。
@@ -332,7 +369,8 @@ source: "{sub_source}"
 2. 彻底去除口头禅与口语废话，转换为书面化精炼表达；
 3. 【术语解析按需且穷尽】：只有真正包含专业术语时才写，没有绝不强写；一旦有，必须全部列出（有几个写几个），且严格保持“专业定义 + 通俗解读”双层解析；
 4. 【讲述逻辑严禁简略】“原片讲述逻辑”是全文最具含金量的部分，必须完整展现作者的论证厚度，将“因果机制推演”与“关键事实数据/案例”紧密结合融为一体，做到论点扎实、脉络连贯、细节丰富；
-5. 【纯净导图】：思维导图严格包裹在 ```markmap 和 ``` 中，严禁任何 HTML 代码泄露；时间戳只在真正推进时标注，严禁在子点机械重复堆砌相同时间戳。
+5. 【纯净导图】：思维导图严格包裹在 ```markmap 和 ``` 中，严禁任何 HTML 代码泄露；时间戳只在真正推进时标注，严禁在子点机械重复堆砌相同时间戳；
+6. 【事实边界与同行评审】：以严谨客观的学术审稿人身份审视原片。忠实还原作者观点的同时，对伪科学、夸大其词、已证伪论断或以偏概全结论保持警惕，遇争议与事实漏洞主动批注认知边界，拒绝成为谣言的盲目扩音器。
 """
 
     if progress_callback:
