@@ -776,6 +776,12 @@ btnClearAll.addEventListener("click", async () => {
 
 // --- 8. Tab Switching & Chat Management ---
 function switchToTab(targetTab) {
+  // Hide selection popover when switching tabs to avoid stray floating UI
+  if (selectionPopoverEl) {
+    selectionPopoverEl.classList.add("hidden");
+    currentSelectedText = "";
+  }
+
   activeTabName = targetTab;
   tabButtons.forEach(b => {
     if (b.getAttribute("data-tab") === targetTab) {
@@ -880,7 +886,7 @@ if (btnCancelQuote) {
   btnCancelQuote.addEventListener("click", clearQuote);
 }
 
-// Floating Selection Popover Logic (划词提问)
+// Floating Selection Popover Logic (划词提问 - 全局支持：完整总结、字幕原文、伴读答疑、思维导图)
 function handleSelectionChange() {
   if (isInteractingWithPopover) return;
 
@@ -893,18 +899,40 @@ function handleSelectionChange() {
     return;
   }
 
-  // Ensure selection is inside docContentEl
   const range = sel.getRangeAt(0);
   const commonAncestor = range.commonAncestorContainer;
-  const isInsideDoc = docContentEl && docContentEl.contains(commonAncestor);
+  const container = commonAncestor.nodeType === Node.ELEMENT_NODE ? commonAncestor : commonAncestor.parentElement;
 
-  if (!isInsideDoc) {
+  if (!container) {
     if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
     currentSelectedText = "";
     return;
   }
 
-  const text = sel.toString().trim();
+  // Never trigger if selecting inside input, textarea, buttons, toolbar controls, modal, or popover itself
+  if (container.closest('input, textarea, button, #selection-popover, .toolbar, .transcript-toolbar, .doc-actions-bar, .chat-input-wrapper, #settings-modal')) {
+    if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
+    currentSelectedText = "";
+    return;
+  }
+
+  // Ensure selection is inside one of the content panes (完整总结、字幕原文、伴读答疑、思维导图)
+  const targetPane = container.closest('#doc-content, #transcript-list, #chat-messages, .markmap-wrapper, .markdown-body');
+  if (!targetPane) {
+    if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
+    currentSelectedText = "";
+    return;
+  }
+
+  // Ensure target pane is actually visible (not in a hidden tab)
+  const parentTabPane = targetPane.closest('.tab-pane');
+  if (parentTabPane && parentTabPane.classList.contains('hidden')) {
+    if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
+    currentSelectedText = "";
+    return;
+  }
+
+  const text = sel.toString().replace(/\r\n/g, '\n').trim();
   if (text.length < 2) {
     if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
     currentSelectedText = "";
@@ -919,8 +947,8 @@ function handleSelectionChange() {
   // Selection bounding box in viewport coordinates
   const rect = range.getBoundingClientRect();
 
-  // If selection is completely scrolled out of view, hide popover
-  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+  // If selection is collapsed or completely scrolled out of view, hide popover
+  if (!rect || (rect.width === 0 && rect.height === 0) || rect.bottom < 0 || rect.top > window.innerHeight) {
     selectionPopoverEl.classList.add("hidden");
     return;
   }
@@ -957,21 +985,43 @@ function handleSelectionChange() {
 }
 
 document.addEventListener("selectionchange", handleSelectionChange);
-if (docContentEl) {
-  docContentEl.addEventListener("mouseup", () => {
-    setTimeout(handleSelectionChange, 10);
-  });
-}
-if (docViewEl) {
-  docViewEl.addEventListener("scroll", () => {
-    if (selectionPopoverEl && !selectionPopoverEl.classList.contains("hidden")) {
-      handleSelectionChange();
-    }
-  }, { passive: true });
-}
+
+// Mouseup anywhere in document ensures selection is finalized after dragging across text in any pane
+document.addEventListener("mouseup", (e) => {
+  if (isInteractingWithPopover) return;
+  setTimeout(handleSelectionChange, 10);
+});
+
+// Capture-phase scroll listener catches scrolling in docView, transcriptList, chatMessages, or any other pane
+window.addEventListener("scroll", () => {
+  if (selectionPopoverEl && !selectionPopoverEl.classList.contains("hidden")) {
+    handleSelectionChange();
+  }
+}, { passive: true, capture: true });
+
+// Also attach direct scroll listeners on key scrolling containers
+[docContentEl, docViewEl, transcriptListEl, chatMessagesEl].forEach(el => {
+  if (el) {
+    el.addEventListener("scroll", () => {
+      if (selectionPopoverEl && !selectionPopoverEl.classList.contains("hidden")) {
+        handleSelectionChange();
+      }
+    }, { passive: true });
+  }
+});
+
 window.addEventListener("resize", () => {
   if (selectionPopoverEl && !selectionPopoverEl.classList.contains("hidden")) {
     handleSelectionChange();
+  }
+});
+
+// Global mouseup failsafe to release isInteractingWithPopover
+window.addEventListener("mouseup", () => {
+  if (isInteractingWithPopover) {
+    setTimeout(() => {
+      isInteractingWithPopover = false;
+    }, 200);
   }
 });
 
@@ -1091,7 +1141,7 @@ async function sendChatMessage(userText, quote = "") {
   }
 
   if (!currentSummaryData || !currentSummaryData.markdown) {
-    alert("请先点击【开始智能总结】解析视频，之后方可使用伴读答疑功能！");
+    alert("请先点击【一键总结】解析视频，之后方可使用伴读答疑功能！");
     return;
   }
 
