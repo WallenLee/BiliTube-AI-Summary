@@ -903,23 +903,47 @@ function handleSelectionChange() {
 
   currentSelectedText = text;
 
-  // Calculate popover positioning
-  const rect = range.getBoundingClientRect();
-  const popoverWidth = selectionPopoverEl.offsetWidth || 230;
-  const popoverHeight = selectionPopoverEl.offsetHeight || 36;
+  // Unhide first so dimensions can be measured accurately
+  selectionPopoverEl.classList.remove("hidden");
 
-  let left = rect.left + (rect.width / 2) - (popoverWidth / 2);
+  // Selection bounding box in viewport coordinates
+  const rect = range.getBoundingClientRect();
+
+  // If selection is completely scrolled out of view, hide popover
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    selectionPopoverEl.classList.add("hidden");
+    return;
+  }
+
+  const popoverRect = selectionPopoverEl.getBoundingClientRect();
+  const popoverWidth = popoverRect.width || 230;
+  const popoverHeight = popoverRect.height || 36;
+
+  // Horizontal calculation: Center above selection
+  const selCenterX = rect.left + (rect.width / 2);
+  let left = selCenterX - (popoverWidth / 2);
+
+  // Viewport padding to ensure buttons never get cut off at edges
+  const padding = 8;
+  const maxLeft = Math.max(padding, window.innerWidth - popoverWidth - padding);
+  left = Math.max(padding, Math.min(maxLeft, left));
+
+  // Vertical calculation:
+  // Default: 8px above the top of the selection
   let top = rect.top - popoverHeight - 8;
 
-  // Keep within viewport boundaries
-  left = Math.max(10, Math.min(window.innerWidth - popoverWidth - 10, left));
+  // If overflowing top of viewport (or upper navigation bar), flip below selection
   if (top < 10) {
     top = rect.bottom + 8;
   }
 
-  selectionPopoverEl.style.left = `${left}px`;
-  selectionPopoverEl.style.top = `${top}px`;
-  selectionPopoverEl.classList.remove("hidden");
+  // If flipping below would overflow the bottom of the viewport
+  if (top + popoverHeight > window.innerHeight - padding) {
+    top = Math.max(padding, window.innerHeight - popoverHeight - padding);
+  }
+
+  selectionPopoverEl.style.left = `${Math.round(left)}px`;
+  selectionPopoverEl.style.top = `${Math.round(top)}px`;
 }
 
 document.addEventListener("selectionchange", handleSelectionChange);
@@ -928,6 +952,18 @@ if (docContentEl) {
     setTimeout(handleSelectionChange, 10);
   });
 }
+if (docViewEl) {
+  docViewEl.addEventListener("scroll", () => {
+    if (selectionPopoverEl && !selectionPopoverEl.classList.contains("hidden")) {
+      handleSelectionChange();
+    }
+  }, { passive: true });
+}
+window.addEventListener("resize", () => {
+  if (selectionPopoverEl && !selectionPopoverEl.classList.contains("hidden")) {
+    handleSelectionChange();
+  }
+});
 
 if (selectionPopoverEl) {
   selectionPopoverEl.addEventListener("mousedown", (e) => {
