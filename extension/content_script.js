@@ -112,7 +112,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
     if (!viewData || viewData.code !== 0 || !viewData.data) return null;
 
     const cid = viewData.data.cid;
-    const title = viewData.data.title || document.title;
+    const title = getPageVideoTitle() || viewData.data.title || document.title;
     const author = viewData.data.owner ? viewData.data.owner.name : "UP主";
 
     // 2. Query player v2 API (authenticated by current session)
@@ -174,6 +174,32 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
   }
 }
 
+// Extract accurate real-time video title from page DOM (immune to SPA title lag)
+function getPageVideoTitle() {
+  // 1. Try Bilibili specific title elements in DOM
+  const biliH1 = document.querySelector('h1.video-title') 
+    || document.querySelector('.video-info-title-inner')
+    || document.querySelector('.video-info-title')
+    || document.querySelector('#viewbox_report .video-title')
+    || document.querySelector('.player-wrap .video-title');
+  if (biliH1 && biliH1.textContent.trim()) {
+    return biliH1.textContent.trim();
+  }
+
+  // 2. Try YouTube specific title elements
+  const ytH1 = document.querySelector('ytd-watch-metadata #title h1 yt-formatted-string')
+    || document.querySelector('h1.ytd-video-primary-info-renderer')
+    || document.querySelector('#title h1');
+  if (ytH1 && ytH1.textContent.trim()) {
+    return ytH1.textContent.trim();
+  }
+
+  // 3. Fallback to document.title with common platform suffix cleanup
+  let title = (document.title || "").trim();
+  title = title.replace(/_哔哩哔哩_bilibili$/i, '').replace(/ - YouTube$/i, '').trim();
+  return title || "未知视频";
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "SEEK") {
     const targetSeconds = parseFloat(request.seconds);
@@ -192,7 +218,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "GET_VIDEO_INFO") {
     const video = findActiveVideo();
     sendResponse({
-      title: document.title,
+      title: getPageVideoTitle(),
       url: window.location.href,
       currentTime: video ? video.currentTime : 0
     });

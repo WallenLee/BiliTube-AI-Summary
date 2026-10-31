@@ -1,8 +1,10 @@
+import gc
 import json
 import os
 import re
 import tempfile
 import urllib.request
+import uuid
 import yt_dlp
 from asr_sensevoice import transcribe_audio, parse_srt
 from config import load_config
@@ -283,22 +285,30 @@ def get_subtitles_via_ytdlp(url: str, progress_callback=None) -> tuple[list[dict
         return None
 
 def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) -> tuple[list[dict], dict]:
-    """Slow channel fallback: Download pure audio and run local SenseVoice ASR"""
+    """Slow channel fallback: Download pure audio and run local SenseVoice ASR.
+    Uses UUID-isolated filenames to strictly prevent any cross-video audio pollution.
+    """
     cfg = load_config()
     proxy = cfg.get("proxy_url") if "youtube.com" in url or "youtu.be" in url else None
     ffmpeg_bin = cfg.get("ffmpeg_bin", "").strip() or "ffmpeg"
 
     temp_dir = tempfile.gettempdir()
-    output_template = os.path.join(temp_dir, "ai_summary_%(id)s.%(ext)s")
+    # UUID task isolation: guarantees 100% no cross-talk with previous or parallel tasks
+    task_uid = uuid.uuid4().hex[:12]
+    file_prefix = f"bilitube_{task_uid}"
+    output_template = os.path.join(temp_dir, f"{file_prefix}.%(ext)s")
+    expected_wav = os.path.join(temp_dir, f"{file_prefix}.wav")
 
     if progress_callback:
-        progress_callback("未检测到现有字幕，正在快速抓取轻量音频 (yt-dlp)...")
+        progress_callback("未检测到有效字幕，正在快速抓取轻量音频 (yt-dlp)...")
 
     ydl_opts = {
         # 1. 优先抓取低码率纯人声音频（32k~64k 对 ASR 而言绰绰有余，体积比高音质缩小 75%）
         'format': 'ba[abr<=64]/worstaudio/ba/b',
         'outtmpl': output_template,
-        # 2. 开启 8 线程并发分片下载，突破平台单线程限速
+        # 2. 严格禁用合集/剧集连带下载，确保 100% 仅下载目标单体视频
+        'noplaylist': True,
+        # 3. 开启 8 线程并发分片下载，突破平台单线程限速
         'concurrent_fragment_downloads': 8,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -331,15 +341,13 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
                 meta["title"] = res.get('title', '视频总结')
                 meta["author"] = res.get('uploader', '未知UP主')
             
-            # Find the generated wav file
-            video_id = res.get('id', 'temp')
-            expected_wav = os.path.join(temp_dir, f"ai_summary_{video_id}.wav")
+            # Find the generated wav file strictly matching this task's unique prefix
             if os.path.exists(expected_wav):
                 audio_file = expected_wav
             else:
-                # Find any matching file
+                # Strictly isolate: only find files starting with THIS task's unique prefix
                 for f in os.listdir(temp_dir):
-                    if f.startswith("ai_summary_") and f.endswith(".wav"):
+                    if f.startswith(file_prefix) and f.endswith(".wav"):
                         audio_file = os.path.join(temp_dir, f)
                         break
 
@@ -354,11 +362,14 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
         return subtitles, meta
 
     finally:
-        if audio_file and os.path.exists(audio_file):
-            try:
-                os.remove(audio_file)
-            except Exception:
-                pass
+        # Force release any Windows process file locks and cleanup strictly isolated temp files
+        gc.collect()
+        for f in os.listdir(temp_dir):
+            if f.startswith(file_prefix):
+                try:
+                    os.remove(os.path.join(temp_dir, f))
+                except Exception:
+                    pass
 
 def extract_subtitles_pipeline(url: str, progress_callback=None) -> tuple[list[dict], dict]:
     """Dual-channel entry point: Fast first, then slow fallback"""

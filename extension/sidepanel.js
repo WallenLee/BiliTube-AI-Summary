@@ -278,7 +278,12 @@ async function detectCurrentVideoTab() {
     if (!tab || !tab.url) return;
     currentActiveTab = tab;
 
-    videoTitleEl.textContent = tab.title || "未知标题";
+    let displayTitle = (tab.title || "未知标题")
+      .replace(/_哔哩哔哩_bilibili$/i, '')
+      .replace(/ - YouTube$/i, '')
+      .trim();
+
+    videoTitleEl.textContent = displayTitle;
     videoUrlEl.textContent = tab.url;
 
     if (tab.url.includes("bilibili.com")) {
@@ -294,6 +299,20 @@ async function detectCurrentVideoTab() {
       videoPlatformEl.style.background = "#64748b";
       btnSummarize.disabled = false;
     }
+
+    // Query fresh in-DOM video info to avoid any SPA navigation title lag
+    try {
+      chrome.tabs.sendMessage(tab.id, { action: "GET_VIDEO_INFO" }, (resp) => {
+        if (!chrome.runtime.lastError && resp && resp.title) {
+          videoTitleEl.textContent = resp.title;
+          if (resp.url) {
+            videoUrlEl.textContent = resp.url;
+            currentActiveTab.url = resp.url;
+          }
+          currentActiveTab.title = resp.title;
+        }
+      });
+    } catch (e) {}
   } catch (err) {
     console.error("Tab detection error:", err);
   }
@@ -621,12 +640,20 @@ async function startSummarize() {
       setTimeout(() => resolve(null), 1500);
     });
 
+    if (tabRes && tabRes.data && tabRes.data.title) {
+      preTitle = tabRes.data.title;
+      videoTitleEl.textContent = preTitle;
+    }
+
     if (tabRes && tabRes.data && tabRes.data.rejected) {
       progressText.textContent = "⚡ 检测到在线字幕主要为纯音乐/占位标签，自动切换至服务端深度通道...";
       preExtractedSubtitles = null;
     } else if (tabRes && tabRes.status === "success" && tabRes.data && tabRes.data.subtitles && tabRes.data.subtitles.length > 0) {
       preExtractedSubtitles = tabRes.data.subtitles;
-      if (tabRes.data.title) preTitle = tabRes.data.title;
+      if (tabRes.data.title) {
+        preTitle = tabRes.data.title;
+        videoTitleEl.textContent = preTitle;
+      }
       subSource = tabRes.data.sub_source || "browser_direct";
       progressText.textContent = `⚡ 网页官方字幕捕获成功 (共 ${preExtractedSubtitles.length} 句)，跳过下载直接总结...`;
     }
