@@ -24,6 +24,7 @@ ENV/
 *.vtt
 *.jsonl
 *.log
+*.zip
 
 # IDE & OS files
 .DS_Store
