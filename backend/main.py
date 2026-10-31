@@ -1,5 +1,9 @@
 import asyncio
+import collections
+import datetime
 import json
+import re
+import sys
 import uuid
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -11,6 +15,55 @@ from config import load_config, save_config
 from dual_sub_engine import extract_subtitles_pipeline
 from ai_gemini import generate_video_summary, build_chat_prompt, stream_gemini_chat
 from exporter import export_summary_to_file, open_file_locally
+
+# In-memory circular log buffer for live console viewer in browser extension
+MAX_LOG_ENTRIES = 800
+log_buffer = collections.deque(maxlen=MAX_LOG_ENTRIES)
+ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+class LogTee:
+    """Tee stdout and stderr to standard stream and in-memory log buffer"""
+    def __init__(self, original_stream, stream_name="STDOUT"):
+        self.original_stream = original_stream
+        self.stream_name = stream_name
+        self._partial_line = ""
+
+    def write(self, text):
+        if self.original_stream:
+            try:
+                self.original_stream.write(text)
+                self.original_stream.flush()
+            except Exception:
+                pass
+
+        if not text:
+            return
+
+        self._partial_line += text
+        while "\n" in self._partial_line:
+            line, self._partial_line = self._partial_line.split("\n", 1)
+            line = line.strip("\r")
+            clean_line = ANSI_ESCAPE.sub('', line).strip()
+            if clean_line:
+                now_str = datetime.datetime.now().strftime("%H:%M:%S")
+                log_buffer.append(f"[{now_str}] {clean_line}")
+
+    def flush(self):
+        if self.original_stream:
+            try:
+                self.original_stream.flush()
+            except Exception:
+                pass
+
+# Install LogTee only once
+if not isinstance(sys.stdout, LogTee):
+    sys.stdout = LogTee(sys.__stdout__, "STDOUT")
+if not isinstance(sys.stderr, LogTee):
+    sys.stderr = LogTee(sys.__stderr__, "STDERR")
+
+_boot_time = datetime.datetime.now().strftime("%H:%M:%S")
+log_buffer.append(f"[{_boot_time}] [System] 🚀 BiliTube 调度后台已启动 (监听端口: 8765)")
+log_buffer.append(f"[{_boot_time}] [System] 实时运行日志拦截器就绪，准备接收解析任务")
 
 app = FastAPI(title="Video Summary & Mindmap Studio API")
 
@@ -313,6 +366,24 @@ def restart_server_endpoint(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(restart_process)
     return {"status": "ok", "message": "服务正在平滑重启中，请稍候..."}
+
+@app.get("/api/logs")
+def get_logs_endpoint(limit: int = 300):
+    """Retrieve recent server logs for browser extension viewer"""
+    recent = list(log_buffer)[-limit:]
+    return {
+        "status": "ok",
+        "total": len(log_buffer),
+        "logs": recent
+    }
+
+@app.post("/api/logs/clear")
+def clear_logs_endpoint():
+    """Clear server log buffer"""
+    log_buffer.clear()
+    now_str = datetime.datetime.now().strftime("%H:%M:%S")
+    log_buffer.append(f"[{now_str}] [System] 🧹 运行日志已清空")
+    return {"status": "ok", "message": "日志已清空"}
 
 if __name__ == "__main__":
     import uvicorn

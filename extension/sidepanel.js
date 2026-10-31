@@ -73,6 +73,23 @@ const btnRestartService = document.getElementById("btn-restart-service");
 const settingsServiceStatus = document.getElementById("settings-service-status");
 const restartHint = document.getElementById("restart-hint");
 
+// Logs Modal Elements
+const btnLogs = document.getElementById("btn-logs");
+const btnOpenLogsFromSettings = document.getElementById("btn-open-logs-from-settings");
+const logsModal = document.getElementById("logs-modal");
+const btnCloseLogs = document.getElementById("btn-close-logs");
+const btnClearLogs = document.getElementById("btn-clear-logs");
+const btnCopyLogs = document.getElementById("btn-copy-logs");
+const btnRefreshLogs = document.getElementById("btn-refresh-logs");
+const logsBadge = document.getElementById("logs-badge");
+const logsBody = document.getElementById("logs-body");
+const logsList = document.getElementById("logs-list");
+const chkAutoScroll = document.getElementById("chk-auto-scroll");
+const logsStatusHint = document.getElementById("logs-status-hint");
+
+let logPollTimer = null;
+let lastLogText = "";
+
 // --- Session Persistence Management ---
 let activeTabName = "mindmap-view";
 const SESSION_STORAGE_KEY = "BILITUBE_ACTIVE_SESSION";
@@ -1436,6 +1453,154 @@ if (btnRestartService) {
         btnRestartService.innerHTML = '<span class="btn-icon">🔄</span> 重试重启';
       }
     }, 500);
+  });
+}
+
+// --- 10. Real-time Service Logs Terminal ---
+async function fetchAndRenderLogs() {
+  if (!logsModal || logsModal.classList.contains("hidden")) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/logs?limit=400`, { method: "GET" });
+    if (!res.ok) {
+      if (logsStatusHint) logsStatusHint.textContent = `⚠️ 获取日志失败 (HTTP ${res.status})`;
+      return;
+    }
+
+    const data = await res.json();
+    const logs = data.logs || [];
+    if (logsBadge) logsBadge.textContent = `${logs.length} 行`;
+    if (logsStatusHint) logsStatusHint.textContent = `● 实时追踪中 (共 ${data.total || logs.length} 条)`;
+
+    const rawJoined = logs.join("\n");
+    if (rawJoined === lastLogText && logsList.children.length > 1) {
+      return;
+    }
+    lastLogText = rawJoined;
+
+    if (logs.length === 0) {
+      logsList.innerHTML = '<div class="log-empty">暂无后台运行日志</div>';
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    logs.forEach(line => {
+      const row = document.createElement("div");
+      row.className = "log-row";
+
+      // Detect timestamp [HH:MM:SS]
+      const tsMatch = line.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/);
+      let timeText = "";
+      let msgText = line;
+      if (tsMatch) {
+        timeText = tsMatch[1];
+        msgText = tsMatch[2];
+      }
+
+      // Detect log level / category for styling
+      const lower = msgText.toLowerCase();
+      if (lower.includes("error") || lower.includes("exception") || lower.includes("失败") || lower.includes("fail") || lower.includes("503")) {
+        row.classList.add("log-error");
+      } else if (lower.includes("gemini") || lower.includes("stream") || lower.includes("prompt")) {
+        row.classList.add("log-gemini");
+      } else if (lower.includes("ok") || lower.includes("成功") || lower.includes("200 ok") || lower.includes("completed")) {
+        row.classList.add("log-success");
+      } else if (lower.includes("warn") || lower.includes("排队") || lower.includes("备选") || lower.includes("重试")) {
+        row.classList.add("log-warn");
+      } else {
+        row.classList.add("log-info");
+      }
+
+      if (timeText) {
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "log-time";
+        timeSpan.textContent = `[${timeText}]`;
+        row.appendChild(timeSpan);
+      }
+
+      const msgSpan = document.createElement("span");
+      msgSpan.className = "log-msg";
+      msgSpan.textContent = msgText;
+      row.appendChild(msgSpan);
+
+      fragment.appendChild(row);
+    });
+
+    logsList.innerHTML = "";
+    logsList.appendChild(fragment);
+
+    if (chkAutoScroll && chkAutoScroll.checked && logsBody) {
+      logsBody.scrollTop = logsBody.scrollHeight;
+    }
+  } catch (err) {
+    if (logsStatusHint) logsStatusHint.textContent = "🔴 本地调度服务未连接";
+  }
+}
+
+function openLogsModal() {
+  if (!logsModal) return;
+  if (settingsModal && !settingsModal.classList.contains("hidden")) {
+    settingsModal.classList.add("hidden");
+  }
+  logsModal.classList.remove("hidden");
+  fetchAndRenderLogs();
+
+  if (logPollTimer) clearInterval(logPollTimer);
+  logPollTimer = setInterval(fetchAndRenderLogs, 1500);
+}
+
+function closeLogsModal() {
+  if (!logsModal) return;
+  logsModal.classList.add("hidden");
+  if (logPollTimer) {
+    clearInterval(logPollTimer);
+    logPollTimer = null;
+  }
+}
+
+if (btnLogs) {
+  btnLogs.addEventListener("click", openLogsModal);
+}
+if (btnOpenLogsFromSettings) {
+  btnOpenLogsFromSettings.addEventListener("click", openLogsModal);
+}
+if (btnCloseLogs) {
+  btnCloseLogs.addEventListener("click", closeLogsModal);
+}
+
+// Clear Logs
+if (btnClearLogs) {
+  btnClearLogs.addEventListener("click", async () => {
+    try {
+      await fetch(`${API_BASE}/api/logs/clear`, { method: "POST" });
+      lastLogText = "";
+      fetchAndRenderLogs();
+    } catch (e) {
+      logsList.innerHTML = '<div class="log-empty">日志已在本地清空</div>';
+    }
+  });
+}
+
+// Copy Logs
+if (btnCopyLogs) {
+  btnCopyLogs.addEventListener("click", () => {
+    if (!lastLogText) {
+      alert("当前没有可复制的日志！");
+      return;
+    }
+    navigator.clipboard.writeText(lastLogText).then(() => {
+      const orig = btnCopyLogs.textContent;
+      btnCopyLogs.textContent = "✅ 已复制！";
+      setTimeout(() => { btnCopyLogs.textContent = orig; }, 1500);
+    });
+  });
+}
+
+// Refresh Logs
+if (btnRefreshLogs) {
+  btnRefreshLogs.addEventListener("click", () => {
+    lastLogText = "";
+    fetchAndRenderLogs();
   });
 }
 

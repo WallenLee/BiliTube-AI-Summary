@@ -20,7 +20,10 @@
           <span id="service-status" class="status-badge checking">检查服务中...</span>
         </div>
       </div>
-      <button id="btn-settings" class="icon-btn" title="配置与存储设置">⚙️</button>
+      <div class="header-actions">
+        <button id="btn-logs" class="icon-btn" title="查看本地服务实时运行日志">📜</button>
+        <button id="btn-settings" class="icon-btn" title="配置与存储设置">⚙️</button>
+      </div>
     </header>
 
     <!-- Video Info Card -->
@@ -223,15 +226,51 @@
             <label>本地调度服务管理</label>
             <div class="service-control-row">
               <span id="settings-service-status" class="status-badge checking">检查服务中...</span>
-              <button type="button" id="btn-restart-service" class="restart-service-btn" title="程序更新或服务异常时平滑重启后台进程">
-                <span class="btn-icon">🔄</span> 重启本地服务
-              </button>
+              <div class="service-actions">
+                <button type="button" id="btn-open-logs-from-settings" class="small-action-btn" title="查看后台实时运行日志">
+                  <span class="btn-icon">📜</span> 运行日志
+                </button>
+                <button type="button" id="btn-restart-service" class="restart-service-btn" title="程序更新或服务异常时平滑重启后台进程">
+                  <span class="btn-icon">🔄</span> 重启服务
+                </button>
+              </div>
             </div>
             <small id="restart-hint" class="restart-hint">更新代码后点击此处，后台将自动重启并载入最新代码</small>
           </div>
         </div>
         <div class="modal-footer">
           <button id="btn-save-settings" class="primary-btn">保存配置</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Real-time Service Logs Modal -->
+    <div id="logs-modal" class="modal hidden">
+      <div class="modal-content logs-modal-content">
+        <div class="modal-header">
+          <div class="logs-header-title">
+            <span class="logs-header-icon">📜</span>
+            <h3>本地服务实时日志</h3>
+            <span id="logs-badge" class="badge">0 行</span>
+          </div>
+          <div class="logs-header-actions">
+            <button id="btn-clear-logs" class="small-btn" title="清空日志视图">🧹 清空</button>
+            <button id="btn-copy-logs" class="small-btn" title="复制所有日志到剪贴板">📋 复制</button>
+            <button id="btn-refresh-logs" class="small-btn" title="立即刷新日志">🔄 刷新</button>
+            <button id="btn-close-logs" class="close-btn" title="关闭日志窗口">&times;</button>
+          </div>
+        </div>
+        <div id="logs-body" class="logs-body">
+          <div id="logs-list" class="logs-list">
+            <div class="log-loading">正在读取本地服务日志...</div>
+          </div>
+        </div>
+        <div class="logs-footer">
+          <label class="auto-scroll-label">
+            <input type="checkbox" id="chk-auto-scroll" checked>
+            自动滚动到底部
+          </label>
+          <span id="logs-status-hint" class="logs-status-hint">● 实时监听中 (每 1.5 秒更新)</span>
         </div>
       </div>
     </div>
