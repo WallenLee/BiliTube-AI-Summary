@@ -70,6 +70,153 @@ const btnSaveSettings = document.getElementById("btn-save-settings");
 const btnBrowseFolder = document.getElementById("btn-browse-folder");
 const cfgSaveDirInput = document.getElementById("cfg-save-dir");
 
+// --- Session Persistence Management ---
+let activeTabName = "mindmap-view";
+const SESSION_STORAGE_KEY = "BILITUBE_ACTIVE_SESSION";
+const storageArea = (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) 
+  ? chrome.storage.session 
+  : (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local ? chrome.storage.local : null);
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function saveSessionState() {
+  try {
+    if (!storageArea) return;
+    if (!currentSummaryData) {
+      await storageArea.remove(SESSION_STORAGE_KEY);
+      return;
+    }
+    const state = {
+      summaryData: currentSummaryData,
+      subtitles: currentSubtitles || [],
+      chatHistory: chatHistory || [],
+      lastActiveTab: activeTabName || "mindmap-view"
+    };
+    await storageArea.set({ [SESSION_STORAGE_KEY]: state });
+  } catch (err) {
+    console.warn("Could not save session state:", err);
+  }
+}
+
+async function clearSessionState() {
+  try {
+    if (!storageArea) return;
+    await storageArea.remove(SESSION_STORAGE_KEY);
+  } catch (err) {
+    console.warn("Could not clear session state:", err);
+  }
+}
+
+async function restoreSessionState() {
+  try {
+    if (!storageArea) return false;
+    const res = await storageArea.get(SESSION_STORAGE_KEY);
+    const state = res ? res[SESSION_STORAGE_KEY] : null;
+
+    if (!state || !state.summaryData || !state.summaryData.markdown) {
+      return false;
+    }
+
+    currentSummaryData = state.summaryData;
+    currentSubtitles = state.subtitles || [];
+    chatHistory = state.chatHistory || [];
+    activeTabName = state.lastActiveTab || "mindmap-view";
+
+    // 1. Hide empty state
+    emptyStateEl.classList.add("hidden");
+
+    // 2. Unhide target pane first so SVG/DOM has real layout dimensions
+    mindmapViewEl.classList.add("hidden");
+    docViewEl.classList.add("hidden");
+    transcriptViewEl.classList.add("hidden");
+    chatViewEl.classList.add("hidden");
+
+    if (activeTabName === "mindmap-view") {
+      mindmapViewEl.classList.remove("hidden");
+    } else if (activeTabName === "doc-view") {
+      docViewEl.classList.remove("hidden");
+    } else if (activeTabName === "transcript-view") {
+      transcriptViewEl.classList.remove("hidden");
+    } else if (activeTabName === "chat-view") {
+      chatViewEl.classList.remove("hidden");
+    }
+
+    // 3. Render Markmap, Document & Subtitles
+    renderMarkmap(currentSummaryData.markdown);
+    renderDocView(currentSummaryData.markdown);
+    renderTranscript(currentSubtitles);
+
+    // 4. Render Chat History
+    chatMessagesEl.innerHTML = "";
+    if (chatHistory && chatHistory.length > 0) {
+      if (chatWelcomeEl) chatWelcomeEl.classList.add("hidden");
+      chatHistory.forEach(item => {
+        if (item.role === "user") {
+          const userMsgEl = document.createElement("div");
+          userMsgEl.className = "chat-msg user";
+
+          let rawText = item.text || "";
+          let quoteText = "";
+          const qMatch = rawText.match(/^\[引用(?:片段)?:\s*"(.*?)"\]\n([\s\S]*)/);
+          if (qMatch) {
+            quoteText = qMatch[1];
+            rawText = qMatch[2];
+          }
+
+          let userHtml = "";
+          if (quoteText) {
+            userHtml += `<div class="chat-quote-tag">引用: "${escapeHtml(quoteText)}"</div>`;
+          }
+          userHtml += `<div class="chat-content">${escapeHtml(rawText).replace(/\n/g, '<br>')}</div>`;
+          userMsgEl.innerHTML = userHtml;
+          chatMessagesEl.appendChild(userMsgEl);
+        } else if (item.role === "assistant") {
+          const assistantMsgEl = document.createElement("div");
+          assistantMsgEl.className = "chat-msg assistant";
+          const assistantContentEl = document.createElement("div");
+          assistantContentEl.className = "chat-content";
+          renderChatMarkdown(item.text || "", assistantContentEl, false);
+          assistantMsgEl.appendChild(assistantContentEl);
+          chatMessagesEl.appendChild(assistantMsgEl);
+        }
+      });
+      chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    } else {
+      if (chatWelcomeEl) chatWelcomeEl.classList.remove("hidden");
+    }
+
+    // 5. Show Action Buttons
+    btnClearAll.classList.remove("hidden");
+    if (currentSummaryData.file_path) {
+      btnSaveSummary.classList.add("hidden");
+      btnOpenObsidian.classList.remove("hidden");
+      btnOpenObsidian.onclick = () => {
+        if (currentSummaryData.obsidian_uri) window.open(currentSummaryData.obsidian_uri);
+      };
+    } else {
+      btnSaveSummary.classList.remove("hidden");
+      btnSaveSummary.disabled = false;
+      btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
+      btnOpenObsidian.classList.add("hidden");
+    }
+
+    // 6. Switch tab styles & fit markmap
+    switchToTab(activeTabName);
+    return true;
+  } catch (err) {
+    console.error("Failed to restore session state:", err);
+    return false;
+  }
+}
+
 // --- 1. Service Health Check ---
 async function checkServiceHealth() {
   try {
@@ -404,6 +551,12 @@ async function startSummarize() {
   progressContainer.classList.remove("hidden");
   progressText.textContent = "⚡ 正在尝试从当前网页直接捕获官方/AI字幕...";
 
+  // Clear previous session storage because user explicitly started summarizing a new video!
+  currentSummaryData = null;
+  currentSubtitles = [];
+  chatHistory = [];
+  await clearSessionState();
+
   let preExtractedSubtitles = null;
   let preTitle = currentActiveTab.title || "";
   let subSource = "";
@@ -478,6 +631,7 @@ async function startSummarize() {
           clearQuote();
 
           // Reset tab buttons to mindmap active
+          activeTabName = "mindmap-view";
           tabButtons.forEach(b => b.classList.remove("active"));
           tabButtons[0].classList.add("active");
 
@@ -485,6 +639,9 @@ async function startSummarize() {
           renderMarkmap(data.markdown);
           renderDocView(data.markdown);
           renderTranscript(data.subtitles);
+
+          // Save session state to storage
+          saveSessionState();
 
           // Show Action Buttons
           btnClearAll.classList.remove("hidden");
@@ -546,6 +703,11 @@ btnSaveSummary.addEventListener("click", async () => {
 
     const data = await res.json();
     if (data.status === "ok") {
+      if (currentSummaryData) {
+        currentSummaryData.file_path = data.file_path;
+        currentSummaryData.obsidian_uri = data.obsidian_uri;
+        saveSessionState();
+      }
       btnSaveSummary.innerHTML = '<span class="btn-icon">✅</span><span class="btn-text">已存入本地 (点击打开)</span>';
       btnSaveSummary.disabled = false;
       btnSaveSummary.onclick = () => {
@@ -568,7 +730,7 @@ btnSaveSummary.addEventListener("click", async () => {
 });
 
 // Clear / Reset Handler
-btnClearAll.addEventListener("click", () => {
+btnClearAll.addEventListener("click", async () => {
   if (confirm("确定清空当前总结与思维导图吗？（未保存的内容将不留缓存）")) {
     currentSummaryData = null;
     currentSubtitles = [];
@@ -586,6 +748,9 @@ btnClearAll.addEventListener("click", () => {
     if (chatWelcomeEl) chatWelcomeEl.classList.remove("hidden");
     clearQuote();
 
+    // Clear session storage
+    await clearSessionState();
+
     // Hide panes, reveal empty state
     mindmapViewEl.classList.add("hidden");
     docViewEl.classList.add("hidden");
@@ -601,6 +766,7 @@ btnClearAll.addEventListener("click", () => {
 
 // --- 8. Tab Switching & Chat Management ---
 function switchToTab(targetTab) {
+  activeTabName = targetTab;
   tabButtons.forEach(b => {
     if (b.getAttribute("data-tab") === targetTab) {
       b.classList.add("active");
@@ -627,6 +793,10 @@ function switchToTab(targetTab) {
     chatViewEl.classList.remove("hidden");
     chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
     setTimeout(() => chatInputEl.focus(), 80);
+  }
+
+  if (currentSummaryData) {
+    saveSessionState();
   }
 }
 
@@ -677,17 +847,6 @@ btnCopyMd.addEventListener("click", () => {
 });
 
 // --- 9. Chat, Q&A & Floating Selection Popover ---
-
-// Helper: HTML escape
-function escapeHtml(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
 
 // Quote Management
 function setQuote(text) {
@@ -978,6 +1137,8 @@ async function sendChatMessage(userText, quote = "") {
     chatHistory.push({ role: "user", text: recordedUserPrompt });
     chatHistory.push({ role: "assistant", text: fullAssistantText });
 
+    saveSessionState();
+
   } catch (err) {
     assistantContentEl.innerHTML = `<span style="color:#f87171;">⚠️ 提问失败: ${escapeHtml(err.message || "调度服务未响应")}</span>`;
   } finally {
@@ -1091,6 +1252,7 @@ btnSummarize.addEventListener("click", startSummarize);
 // Init
 checkServiceHealth();
 detectCurrentVideoTab();
+restoreSessionState();
 
 chrome.tabs.onActivated.addListener(detectCurrentVideoTab);
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
