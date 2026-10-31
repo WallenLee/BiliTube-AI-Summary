@@ -397,21 +397,31 @@ function renderDocView(rawMarkdown) {
     return "\n" + lines.join("\n") + "\n";
   });
 
-  // 2. Clean up any raw HTML tags that might have leaked into Markdown
+  // 2. Strip any backticks around timestamp links
+  cleanMd = cleanMd.replace(/`(\[(?:⏱️\s*)?\d{1,2}:\d{2}(?::\d{2})?\]\(seek:\d+\))`?/g, '$1');
+
+  // 3. Clean up any raw HTML tags that might have leaked into Markdown
   cleanMd = cleanMd.replace(/<a\s+[^>]*href=["']seek:(\d+)["'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?<\/a>/gi, '[$2](seek:$1)');
   cleanMd = cleanMd.replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
 
-  // 3. Format standard timestamp syntax [MM:SS](seek:123) into clean clickable pill anchors
-  cleanMd = cleanMd.replace(
+  let html = "";
+  if (window.marked) {
+    html = window.marked.parse(cleanMd);
+  } else {
+    html = cleanMd;
+  }
+
+  // 4. Convert seek links into clickable timestamp-pill anchors in HTML
+  html = html.replace(
+    /<a\s+href=["']seek:(\d+)["'][^>]*>(?:⏱️\s*)?([^<]+)<\/a>/gi,
+    '<a class="timestamp-pill" href="seek:$1" title="点击跳转原片对应时间">⏱️ $2</a>'
+  );
+  html = html.replace(
     /\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g,
     '<a class="timestamp-pill" href="seek:$2" title="点击跳转原片对应时间">⏱️ $1</a>'
   );
 
-  if (window.marked) {
-    docContentEl.innerHTML = window.marked.parse(cleanMd);
-  } else {
-    docContentEl.textContent = cleanMd;
-  }
+  docContentEl.innerHTML = html;
 }
 
 function renderTranscript(subtitles) {
@@ -1031,22 +1041,38 @@ function renderChatMarkdown(rawMarkdown, containerEl, showCursor = false) {
 
   let text = rawMarkdown;
 
-  // Clean any raw HTML tag leaks
+  // 1. Strip any backticks around timestamp links if the model outputted `[MM:SS](seek:123)`
+  text = text.replace(/`(\[(?:⏱️\s*)?\d{1,2}:\d{2}(?::\d{2})?\]\(seek:\d+\))`?/g, '$1');
+
+  // 2. Clean up any raw HTML tags that might have leaked into Markdown
   text = text.replace(/<a\s+[^>]*href=["']seek:(\d+)["'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?<\/a>/gi, '[$2](seek:$1)');
   text = text.replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
 
-  // Convert [MM:SS](seek:123) or [⏱️ MM:SS](seek:123) to clickable timestamp pill
-  text = text.replace(
-    /\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g,
-    '<a class="timestamp-pill" href="seek:$2" title="点击跳转原片对应时间">⏱️ $1</a>'
-  );
-
+  // 3. Parse Markdown FIRST using marked
   let html = "";
   if (window.marked) {
     html = window.marked.parse(text);
   } else {
     html = `<p>${escapeHtml(text)}</p>`;
   }
+
+  // 4. Convert seek links into clickable timestamp-pill anchors in the HTML
+  html = html.replace(
+    /<a\s+href=["']seek:(\d+)["'][^>]*>(?:⏱️\s*)?([^<]+)<\/a>/gi,
+    '<a class="timestamp-pill" href="seek:$1" title="点击跳转原片对应时间">⏱️ $2</a>'
+  );
+
+  // Fallback: Also replace any raw [MM:SS](seek:123) that marked didn't parse as a link
+  html = html.replace(
+    /\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g,
+    '<a class="timestamp-pill" href="seek:$2" title="点击跳转原片对应时间">⏱️ $1</a>'
+  );
+
+  // If marked accidentally escaped HTML into &lt;a class="timestamp-pill" ...&gt; or code blocks, unwrap it cleanly!
+  html = html.replace(
+    /(?:<code>)?(?:&lt;|<)a\s+class=["']timestamp-pill["']\s+href=["']seek:(\d+)["'][^>]*>(?:⏱️\s*)?([^<]+)(?:&lt;|<)\/a(?:&gt;|>)(?:<\/code>)?/gi,
+    '<a class="timestamp-pill" href="seek:$1" title="点击跳转原片对应时间">⏱️ $2</a>'
+  );
 
   if (showCursor) {
     html += '<span class="chat-cursor"></span>';

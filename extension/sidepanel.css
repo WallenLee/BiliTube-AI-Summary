@@ -145,7 +145,7 @@ body {
 }
 
 .action-row {
-  margin-top: 4px;
+  margin-top: 6px;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -153,32 +153,47 @@ body {
 
 .primary-btn {
   flex: 1;
+  height: 34px;
   background: linear-gradient(135deg, var(--accent-primary), #8b5cf6);
   color: #fff;
   border: none;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
   transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.primary-btn:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.45);
+}
+
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .secondary-btn {
-  background: rgba(16, 185, 129, 0.2);
+  height: 34px;
+  background: rgba(16, 185, 129, 0.15);
   color: #34d399;
   border: 1px solid rgba(16, 185, 129, 0.4);
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  font-size: 13px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -186,20 +201,31 @@ body {
   white-space: nowrap;
 }
 
-.secondary-btn:hover {
-  background: rgba(16, 185, 129, 0.35);
+.secondary-btn:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.3);
   border-color: #34d399;
   transform: translateY(-1px);
 }
 
+.secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .ghost-btn {
-  background: transparent;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border-color);
   color: var(--text-muted);
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   transition: all 0.2s;
   white-space: nowrap;
 }
@@ -208,25 +234,6 @@ body {
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;
   border-color: rgba(239, 68, 68, 0.3);
-}
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-  transition: all 0.2s ease;
-}
-
-.primary-btn:hover:not(:disabled) {
-  opacity: 0.95;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
-}
-
-.primary-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
 }
 
 /* Progress Bar */
