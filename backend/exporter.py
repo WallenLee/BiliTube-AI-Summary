@@ -31,8 +31,12 @@ def export_summary_to_file(markdown_content: str, title: str) -> tuple[str, str]
         file_path = os.path.join(save_dir, f"{base_name} ({counter}).md")
         counter += 1
 
+    # Ensure content is clean standard Markdown without raw HTML tag leakage
+    clean_content = re.sub(r'<a\s+[^>]*href=["\']seek:(\d+)["\'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?</a>', r'[\2](seek:\1)', markdown_content)
+    clean_content = re.sub(r'<a\s+class=["\']timestamp-pill["\'][^>]*>(.*?)</a>', r'\1', clean_content)
+
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(markdown_content)
+        f.write(clean_content)
 
     print(f"[Exporter] Successfully saved to: {file_path}")
 

@@ -109,6 +109,7 @@ function markdownToMarkmapTree(markdownText) {
   const lines = markdownText.split("\n").filter(l => l.trim().length > 0);
   const root = { content: "核心导图", children: [] };
   const stack = [{ node: root, depth: -1 }];
+  let lastTimestamp = "";
 
   for (const rawLine of lines) {
     let line = rawLine.trimEnd();
@@ -119,6 +120,8 @@ function markdownToMarkmapTree(markdownText) {
     if (hMatch) {
       depth = hMatch[1].length * 2 - 2;
       content = hMatch[2].trim();
+      // On new major sections, allow timestamp restart
+      lastTimestamp = "";
     } else {
       const listMatch = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)/);
       if (listMatch) {
@@ -129,10 +132,26 @@ function markdownToMarkmapTree(markdownText) {
       }
     }
 
-    // Format timestamps [MM:SS](seek:123) into clean clickable links
-    content = content.replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g, 
-      '<a class="timestamp-pill" href="seek:$2">⏱️ $1</a>'
-    );
+    // Clean up any stray raw HTML tags if present in input
+    content = content.replace(/<a\s+[^>]*href=["']seek:(\d+)["'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?<\/a>/gi, '[$2](seek:$1)');
+    content = content.replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
+
+    // Extract and format timestamp [MM:SS](seek:123) into clean clickable links
+    const tsMatch = content.match(/\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/);
+    if (tsMatch) {
+      const timeStr = tsMatch[1];
+      const sec = tsMatch[2];
+      // Deduplicate consecutive identical timestamps on child nodes (e.g. repeated 00:00)
+      if (depth > 0 && timeStr === lastTimestamp) {
+        content = content.replace(tsMatch[0], '').trim();
+      } else {
+        lastTimestamp = timeStr;
+        content = content.replace(
+          tsMatch[0],
+          `<a class="timestamp-pill" href="seek:${sec}" title="点击跳转至 ${timeStr}">⏱️ ${timeStr}</a>`
+        ).trim();
+      }
+    }
 
     // Convert markdown bold **text** to <strong>text</strong>
     content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
@@ -186,15 +205,35 @@ function renderMarkmap(rawMarkdown) {
 }
 
 function renderDocView(rawMarkdown) {
-  let formattedMd = rawMarkdown.replace(
-    /\[(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g,
-    '<a class="timestamp-pill" href="seek:$2">⏱️ $1</a>'
+  if (!rawMarkdown) {
+    docContentEl.innerHTML = "";
+    return;
+  }
+
+  // 1. In Doc View, unwrap ```markmap code blocks so they render as standard headings & lists rather than code blocks!
+  let cleanMd = rawMarkdown.replace(/```markmap\s*([\s\S]*?)```/g, (match, code) => {
+    let lines = code.trim().split("\n");
+    // Strip redundant top-level # Title inside markmap block since document already has a title
+    if (lines.length > 0 && lines[0].startsWith("# ")) {
+      lines.shift();
+    }
+    return "\n" + lines.join("\n") + "\n";
+  });
+
+  // 2. Clean up any raw HTML tags that might have leaked into Markdown
+  cleanMd = cleanMd.replace(/<a\s+[^>]*href=["']seek:(\d+)["'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?<\/a>/gi, '[$2](seek:$1)');
+  cleanMd = cleanMd.replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
+
+  // 3. Format standard timestamp syntax [MM:SS](seek:123) into clean clickable pill anchors
+  cleanMd = cleanMd.replace(
+    /\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g,
+    '<a class="timestamp-pill" href="seek:$2" title="点击跳转原片对应时间">⏱️ $1</a>'
   );
 
   if (window.marked) {
-    docContentEl.innerHTML = window.marked.parse(formattedMd);
+    docContentEl.innerHTML = window.marked.parse(cleanMd);
   } else {
-    docContentEl.textContent = formattedMd;
+    docContentEl.textContent = cleanMd;
   }
 }
 
@@ -290,6 +329,15 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     const sec = href.replace("seek:", "");
     seekVideo(sec);
+    return;
+  }
+
+  // Also support URLs with ?t=123 or &t=123s
+  const tMatch = href.match(/[?&]t=(\d+)s?/);
+  if (tMatch) {
+    e.preventDefault();
+    seekVideo(tMatch[1]);
+    return;
   }
 });
 
@@ -545,7 +593,11 @@ btnResetMap.addEventListener("click", () => {
 // Copy Markdown
 btnCopyMd.addEventListener("click", () => {
   if (currentSummaryData && currentSummaryData.markdown) {
-    navigator.clipboard.writeText(currentSummaryData.markdown).then(() => {
+    // Sanitize any raw HTML tag leaks before copying to clipboard
+    let cleanMd = currentSummaryData.markdown
+      .replace(/<a\s+[^>]*href=["']seek:(\d+)["'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?<\/a>/gi, '[$2](seek:$1)')
+      .replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
+    navigator.clipboard.writeText(cleanMd).then(() => {
       btnCopyMd.textContent = "✅ 已复制到剪贴板！";
       setTimeout(() => { btnCopyMd.textContent = "📋 复制 Markdown"; }, 2000);
     });
