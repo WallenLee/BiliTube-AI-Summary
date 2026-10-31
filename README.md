@@ -171,7 +171,9 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 ### 第五步：启动本地服务
 
-- **Windows 用户**：双击运行 `backend/start_server.bat` 即可；
+- **常规启动（带控制台黑框）**：双击运行根目录或 `backend/` 下的 `start_server.bat` 即可；
+- **静默后台启动（无黑框无感运行 · 推荐）**：双击运行根目录或 `backend/` 下的 `start_silent.vbs`；如需开机自启，只需为 `start_silent.vbs` 创建桌面快捷方式并拖入 Windows 自启动文件夹（按 `Win + R` 输入 `shell:startup` 回车即可打开自启文件夹）；
+- **代码更新与平滑重启**：更新代码后，直接在浏览器插件右上角「⚙️ 设置」面板内点击 **「🔄 重启本地服务」**，即可 1 秒内无感重启并自动加载最新代码！
 - **命令行启动**：
   ```bash
   cd backend
@@ -187,7 +189,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
    - Chrome 输入：`chrome://extensions/`
    - Edge 输入：`edge://extensions/`
 2. 开启右上角 **「开发者模式 (Developer Mode)」** 开关；
-3. 点击 **「加载已解压的扩展程序 (Load unpacked)」**；
+3. 点击 **「加载已解压的扩展程序 (Load unpacked)」**（或直接解压 Releases 发布的 `BiliTube-AI-Summary-v1.2.0.zip` 安装）；
 4. 选择本项目根目录下的 **`extension`** 文件夹；
 5. 将插件固定在工具栏以便日常使用。
 
@@ -197,7 +199,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 1. 打开任意一个 **B站 (Bilibili)** 或 **YouTube** 视频页面；
 2. 点击浏览器工具栏的插件图标，侧边栏滑出；
-3. 点击 **「一键生成总结与思维导图」**：
+3. 点击 **「✨ 一键总结」**：
    - 有字幕视频：10~15 秒直接出图；
    - 无字幕视频：后台自动并发提取音频并调用本地 SenseVoice 转写后生成总结；
 4. **交互浏览与提问**：
