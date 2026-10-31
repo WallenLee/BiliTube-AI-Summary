@@ -210,13 +210,13 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
     """Slow channel fallback: Download pure audio and run local SenseVoice ASR"""
     cfg = load_config()
     proxy = cfg.get("proxy_url") if "youtube.com" in url or "youtu.be" in url else None
-    ffmpeg_bin = cfg.get("ffmpeg_bin", r"D:\ffmpeg\bin\ffmpeg.exe")
+    ffmpeg_bin = cfg.get("ffmpeg_bin", "").strip() or "ffmpeg"
 
     temp_dir = tempfile.gettempdir()
     output_template = os.path.join(temp_dir, "ai_summary_%(id)s.%(ext)s")
 
     if progress_callback:
-        progress_callback("未检测到现有字幕，正在快速抓取纯音频 (yt-dlp)...")
+        progress_callback("未检测到现有字幕，正在快速抓取轻量音频 (yt-dlp)...")
 
     ydl_opts = {
         # 1. 优先抓取低码率纯人声音频（32k~64k 对 ASR 而言绰绰有余，体积比高音质缩小 75%）
@@ -229,11 +229,21 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
             'preferredcodec': 'wav',
             'preferredquality': '0',
         }],
-        'ffmpeg_location': os.path.dirname(ffmpeg_bin),
         'postprocessor_args': ['-ar', '16000', '-ac', '1', '-threads', '4'],
         'quiet': True,
         'no_warnings': True,
     }
+
+    # 智能定位 FFmpeg 目录（自适应 Windows / macOS / Linux）
+    ffmpeg_dir = os.path.dirname(ffmpeg_bin)
+    if not ffmpeg_dir or not os.path.exists(ffmpeg_dir):
+        import shutil
+        found = shutil.which(ffmpeg_bin) or shutil.which("ffmpeg")
+        if found:
+            ffmpeg_dir = os.path.dirname(found)
+    if ffmpeg_dir and os.path.exists(ffmpeg_dir):
+        ydl_opts['ffmpeg_location'] = ffmpeg_dir
+
     if proxy:
         ydl_opts['proxy'] = proxy
 
@@ -258,7 +268,7 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
                         break
 
         if not audio_file or not os.path.exists(audio_file):
-            raise FileNotFoundError("Audio extraction failed, WAV file not found.")
+            raise FileNotFoundError("音频提取失败，未生成对应的 WAV 文件。请检查 FFmpeg 是否已正确安装。")
 
         if progress_callback:
             progress_callback("音频抓取完成，开始调用本地 SenseVoice 识别字幕...")
@@ -298,4 +308,9 @@ def extract_subtitles_pipeline(url: str, progress_callback=None) -> tuple[list[d
             return subtitles, meta
 
     # 3. Slow Channel Fallback: Download Audio + Local SenseVoice
+    cfg = load_config()
+    bin_path = cfg.get("sensevoice_bin", "").strip()
+    if not bin_path or not os.path.exists(bin_path):
+        raise RuntimeError("该视频未提供在线字幕。本项目支持无字幕视频本地识别，请在设置中配置本地 SenseVoice 路径以开启该功能。")
+
     return download_audio_and_transcribe(url, meta, progress_callback)
