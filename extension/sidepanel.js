@@ -612,7 +612,10 @@ async function startSummarize() {
       setTimeout(() => resolve(null), 1500);
     });
 
-    if (tabRes && tabRes.status === "success" && tabRes.data && tabRes.data.subtitles && tabRes.data.subtitles.length > 0) {
+    if (tabRes && tabRes.data && tabRes.data.rejected) {
+      progressText.textContent = "⚡ 检测到在线字幕主要为纯音乐/占位标签，自动切换至服务端深度通道...";
+      preExtractedSubtitles = null;
+    } else if (tabRes && tabRes.status === "success" && tabRes.data && tabRes.data.subtitles && tabRes.data.subtitles.length > 0) {
       preExtractedSubtitles = tabRes.data.subtitles;
       if (tabRes.data.title) preTitle = tabRes.data.title;
       subSource = tabRes.data.sub_source || "browser_direct";
@@ -1463,7 +1466,11 @@ async function fetchAndRenderLogs() {
   try {
     const res = await fetch(`${API_BASE}/api/logs?limit=400`, { method: "GET" });
     if (!res.ok) {
-      if (logsStatusHint) logsStatusHint.textContent = `⚠️ 获取日志失败 (HTTP ${res.status})`;
+      if (res.status === 404) {
+        if (logsStatusHint) logsStatusHint.textContent = "⚠️ 后台尚未加载日志接口，请在设置中点击【🔄 重启服务】";
+      } else {
+        if (logsStatusHint) logsStatusHint.textContent = `⚠️ 获取日志失败 (HTTP ${res.status})`;
+      }
       return;
     }
 

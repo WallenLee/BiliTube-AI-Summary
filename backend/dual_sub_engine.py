@@ -7,6 +7,65 @@ import yt_dlp
 from asr_sensevoice import transcribe_audio, parse_srt
 from config import load_config
 
+# Regex to detect lines that are purely background music, noise or non-dialogue tags
+MUSIC_OR_NOISE_RE = re.compile(
+    r'^(?:[♪♫♬♩\s\-_—～~·\.\*\#]+|'
+    r'[\(\[\{（【\s]*(?:音乐|背景音乐|纯音乐|Music|BGM|Instrumental|Soundtrack)[\)\]\}）】\s]*)$',
+    re.IGNORECASE
+)
+CJK_OR_ALPHANUM_RE = re.compile(r'[\u4e00-\u9fa5a-zA-Z0-9]')
+
+def is_valid_dialogue_subtitles(subtitles: list[dict], video_duration: float = 0) -> bool:
+    """Triple-Check Subtitle Quality Guard:
+    Checks if subtitles contain genuine spoken dialogue density rather than merely BGM/music/noise tags.
+    Does NOT remove or alter original subtitle items.
+    """
+    if not subtitles or len(subtitles) == 0:
+        return False
+
+    total_lines = len(subtitles)
+    dialogue_lines = 0
+    total_real_chars = 0
+    max_timestamp = 0.0
+
+    for item in subtitles:
+        content = (item.get("content") or "").strip()
+        to_t = float(item.get("to") or 0.0)
+        if to_t > max_timestamp:
+            max_timestamp = to_t
+
+        # If it's purely a music or noise symbol, it's not spoken dialogue
+        if MUSIC_OR_NOISE_RE.match(content):
+            continue
+
+        # Count genuine CJK or alphanumeric characters
+        real_chars = CJK_OR_ALPHANUM_RE.findall(content)
+        char_count = len(real_chars)
+        if char_count >= 2:
+            dialogue_lines += 1
+            total_real_chars += char_count
+
+    estimated_duration = video_duration if video_duration > 0 else max_timestamp
+
+    # Check 1: Minimum total dialogue characters
+    min_char_threshold = 35 if (0 < estimated_duration < 60) else 100
+    if total_real_chars < min_char_threshold:
+        return False
+
+    # Check 2: Dialogue line ratio (at least 30% of lines must be real speech)
+    dialogue_ratio = dialogue_lines / float(total_lines)
+    if dialogue_ratio < 0.30:
+        return False
+
+    # Check 3: Dialogue density per minute for longer videos (>= 2 minutes)
+    if estimated_duration >= 120.0:
+        duration_minutes = estimated_duration / 60.0
+        chars_per_min = total_real_chars / duration_minutes
+        if chars_per_min < 20.0:
+            return False
+
+    return True
+
 def get_bilibili_subtitles(url: str, progress_callback=None) -> tuple[list[dict], dict] | None:
     """Fast channel: Attempt to extract subtitles from Bilibili via web API"""
     match = re.search(r'(BV[a-zA-Z0-9]+)', url, re.IGNORECASE)
@@ -90,6 +149,13 @@ def get_bilibili_subtitles(url: str, progress_callback=None) -> tuple[list[dict]
                     "to": round(float(to_t), 2),
                     "content": content
                 })
+        
+        # Triple-Check Quality Guard
+        if not is_valid_dialogue_subtitles(subtitles):
+            if progress_callback:
+                progress_callback("⚠️ B 站在线字幕仅包含背景音乐或有效对白不足，自动降级至音频转写通道...")
+            print("[BiliSub] Subtitles rejected: failed Triple-Check dialogue density check (mostly BGM/music/noise).")
+            return None, meta
         
         meta["sub_source"] = "bilibili_api"
         return subtitles, meta
@@ -188,8 +254,13 @@ def get_subtitles_via_ytdlp(url: str, progress_callback=None) -> tuple[list[dict
                                     "content": txt
                                 })
                         if subtitles:
-                            meta["sub_source"] = "yt_dlp_json3"
-                            return subtitles, meta
+                            if not is_valid_dialogue_subtitles(subtitles):
+                                if progress_callback:
+                                    progress_callback("⚠️ 在线字幕仅包含背景音乐或有效对白不足，自动降级至音频转写通道...")
+                                print("[YT-DLP Sub] Subtitles rejected: failed Triple-Check dialogue density check.")
+                            else:
+                                meta["sub_source"] = "yt_dlp_json3"
+                                return subtitles, meta
                     except Exception as je:
                         print(f"[YT-DLP Sub] JSON3 parse failed: {je}")
 
@@ -197,8 +268,13 @@ def get_subtitles_via_ytdlp(url: str, progress_callback=None) -> tuple[list[dict
                 if 'WEBVTT' in raw_sub:
                     subtitles = parse_srt(raw_sub)
                     if subtitles:
-                        meta["sub_source"] = "yt_dlp_vtt"
-                        return subtitles, meta
+                        if not is_valid_dialogue_subtitles(subtitles):
+                            if progress_callback:
+                                progress_callback("⚠️ 在线字幕仅包含背景音乐或有效对白不足，自动降级至音频转写通道...")
+                            print("[YT-DLP Sub] Subtitles rejected: failed Triple-Check dialogue density check.")
+                        else:
+                            meta["sub_source"] = "yt_dlp_vtt"
+                            return subtitles, meta
 
             return None, meta
 
@@ -311,6 +387,6 @@ def extract_subtitles_pipeline(url: str, progress_callback=None) -> tuple[list[d
     cfg = load_config()
     bin_path = cfg.get("sensevoice_bin", "").strip()
     if not bin_path or not os.path.exists(bin_path):
-        raise RuntimeError("该视频未提供在线字幕。本项目支持无字幕视频本地识别，请在设置中配置本地 SenseVoice 路径以开启该功能。")
+        raise RuntimeError("检测到该视频未提供在线字幕，或在线字幕主要为纯音乐/占位标签导致有效口播缺失。需通过本地 SenseVoice 进行语音识别，请在设置中配置 SenseVoice 路径以开启离线转写，或总结其他带有效字幕的视频。")
 
     return download_audio_and_transcribe(url, meta, progress_callback)

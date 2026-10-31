@@ -52,6 +52,51 @@ function showSeekToast(seconds) {
   }, 1800);
 }
 
+// --- Subtitle Dialogue Density Quality Guard (Triple-Check) ---
+const MUSIC_NOISE_RE = /^(?:[♪♫♬♩\s\-_—～~·.*#]+|[([（【\s]*(?:音乐|背景音乐|纯音乐|Music|BGM|Instrumental|Soundtrack)[)\]}）】\s]*)$/i;
+const CJK_ALPHANUM_RE = /[\u4e00-\u9fa5a-zA-Z0-9]/g;
+
+function isValidDialogueSubtitles(subtitles, videoDuration = 0) {
+  if (!Array.isArray(subtitles) || subtitles.length === 0) return false;
+
+  let totalLines = subtitles.length;
+  let dialogueLines = 0;
+  let totalRealChars = 0;
+  let maxTimestamp = 0;
+
+  for (const item of subtitles) {
+    const content = (item.content || "").trim();
+    const toT = parseFloat(item.to || 0);
+    if (toT > maxTimestamp) maxTimestamp = toT;
+
+    if (MUSIC_NOISE_RE.test(content)) continue;
+
+    const chars = content.match(CJK_ALPHANUM_RE);
+    const count = chars ? chars.length : 0;
+    if (count >= 2) {
+      dialogueLines++;
+      totalRealChars += count;
+    }
+  }
+
+  const estimatedDuration = videoDuration > 0 ? videoDuration : maxTimestamp;
+
+  // 1. Minimum character threshold (at least 100 chars, or 35 chars for very short clips)
+  const minCharThreshold = (estimatedDuration > 0 && estimatedDuration < 60) ? 35 : 100;
+  if (totalRealChars < minCharThreshold) return false;
+
+  // 2. Dialogue line ratio (at least 30% lines must contain real speech)
+  if ((dialogueLines / totalLines) < 0.30) return false;
+
+  // 3. Dialogue density per minute for videos >= 2 minutes
+  if (estimatedDuration >= 120) {
+    const charsPerMin = totalRealChars / (estimatedDuration / 60);
+    if (charsPerMin < 20) return false;
+  }
+
+  return true;
+}
+
 // --- Direct In-Browser Bilibili Subtitle Extractor ---
 async function tryExtractBilibiliSubtitlesInBrowser() {
   const bvidMatch = window.location.pathname.match(/BV[a-zA-Z0-9]+/i);
@@ -104,6 +149,18 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
       to: Math.round(parseFloat(item.to) * 100) / 100,
       content: (item.content || "").trim()
     })).filter(item => item.content.length > 0);
+
+    // Triple-Check Quality Guard: Reject if mostly background music / noise tags
+    if (!isValidDialogueSubtitles(subtitles)) {
+      console.warn("[ContentScript] In-browser subtitles rejected: failed Triple-Check dialogue density check (mostly BGM/music/noise).");
+      return {
+        subtitles: [],
+        rejected: true,
+        reason: "insufficient_dialogue_density",
+        title: title,
+        author: author
+      };
+    }
 
     return {
       subtitles: subtitles,

@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import load_config, save_config
-from dual_sub_engine import extract_subtitles_pipeline
+from dual_sub_engine import extract_subtitles_pipeline, is_valid_dialogue_subtitles
 from ai_gemini import generate_video_summary, build_chat_prompt, stream_gemini_chat
 from exporter import export_summary_to_file, open_file_locally
 
@@ -131,12 +131,15 @@ def run_summarize_workflow(task_id: str, url: str, user_title: str, pre_subtitle
 
     try:
         meta = {"title": user_title or "视频总结", "author": "UP主/作者", "url": url}
-        if pre_subtitles and len(pre_subtitles) > 0:
+        if pre_subtitles and len(pre_subtitles) > 0 and is_valid_dialogue_subtitles(pre_subtitles):
             progress_callback(f"⚡ 成功捕获原生字幕 (共 {len(pre_subtitles)} 句)，跳过下载直接提炼！")
             subtitles = pre_subtitles
             meta["sub_source"] = sub_source or "browser_direct_ai"
         else:
-            progress_callback("开始解析视频链接与字幕通道...")
+            if pre_subtitles and len(pre_subtitles) > 0:
+                progress_callback("⚠️ 网页捕获的在线字幕主要为纯音乐/占位符，自动转入服务端通道...")
+            else:
+                progress_callback("开始解析视频链接与字幕通道...")
             subtitles, meta = extract_subtitles_pipeline(url, progress_callback=progress_callback)
 
         if not subtitles:
