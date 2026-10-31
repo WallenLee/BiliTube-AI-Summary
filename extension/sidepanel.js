@@ -313,8 +313,53 @@ async function detectCurrentVideoTab() {
         }
       });
     } catch (e) {}
+
+    // Check if current displayed summary belongs to a different video
+    checkStaleSummaryMismatch();
   } catch (err) {
     console.error("Tab detection error:", err);
+  }
+}
+
+function checkStaleSummaryMismatch() {
+  if (!currentSummaryData || !currentActiveTab || !currentActiveTab.url) return;
+  const currentUrl = currentActiveTab.url.split('?')[0].split('#')[0];
+  const summaryUrl = (currentSummaryData.url || "").split('?')[0].split('#')[0];
+
+  // If URL clearly belongs to another video
+  if (summaryUrl && currentUrl && !currentUrl.includes(summaryUrl) && !summaryUrl.includes(currentUrl)) {
+    // Show polite notice badge on top of views
+    let mismatchNotice = document.getElementById("ai-mismatch-notice");
+    if (!mismatchNotice) {
+      mismatchNotice = document.createElement("div");
+      mismatchNotice.id = "ai-mismatch-notice";
+      mismatchNotice.style.cssText = `
+        background: rgba(245, 158, 11, 0.15);
+        color: #f59e0b;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin: 10px 0 6px 0;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      `;
+      const mainContainer = document.querySelector(".view-container") || document.body;
+      mainContainer.parentElement.insertBefore(mismatchNotice, mainContainer);
+    }
+    mismatchNotice.innerHTML = `
+      <span>💡 当前展示为上一篇视频的总结记录。点击上方<b>【✨ 一键总结】</b>开始分析当前视频。</span>
+      <button id="btn-dismiss-mismatch" style="background:none;border:none;color:#f59e0b;cursor:pointer;font-size:14px;padding:0 4px;">×</button>
+    `;
+    mismatchNotice.classList.remove("hidden");
+    const btnDismiss = document.getElementById("btn-dismiss-mismatch");
+    if (btnDismiss) {
+      btnDismiss.onclick = () => mismatchNotice.classList.add("hidden");
+    }
+  } else {
+    const mismatchNotice = document.getElementById("ai-mismatch-notice");
+    if (mismatchNotice) mismatchNotice.classList.add("hidden");
   }
 }
 
@@ -606,6 +651,14 @@ async function startSummarize() {
     return;
   }
 
+  // Always re-query the currently active tab first to guarantee 100% real-time accuracy across tabs and SPA
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab && activeTab.url) {
+      currentActiveTab = activeTab;
+    }
+  } catch (e) {}
+
   if (!currentActiveTab || !currentActiveTab.url) {
     alert("未获取到当前标签页视频链接，请刷新重试。");
     return;
@@ -617,11 +670,19 @@ async function startSummarize() {
   progressContainer.classList.remove("hidden");
   progressText.textContent = "⚡ 正在尝试从当前网页直接捕获官方/AI字幕...";
 
-  // Clear previous session storage because user explicitly started summarizing a new video!
+  // Clear previous session storage and immediately hide all old content to eliminate any cross-video visual contamination
   currentSummaryData = null;
   currentSubtitles = [];
   chatHistory = [];
   await clearSessionState();
+
+  mindmapViewEl.classList.add("hidden");
+  docViewEl.classList.add("hidden");
+  transcriptViewEl.classList.add("hidden");
+  chatViewEl.classList.add("hidden");
+  emptyStateEl.classList.add("hidden");
+  const mismatchNotice = document.getElementById("ai-mismatch-notice");
+  if (mismatchNotice) mismatchNotice.classList.add("hidden");
 
   let preExtractedSubtitles = null;
   let preTitle = currentActiveTab.title || "";
@@ -646,16 +707,33 @@ async function startSummarize() {
     }
 
     if (tabRes && tabRes.data && tabRes.data.rejected) {
-      progressText.textContent = "⚡ 检测到在线字幕主要为纯音乐/占位标签，自动切换至服务端深度通道...";
+      if (tabRes.data.reason === "duration_mismatch" || tabRes.data.reason === "duration_incomplete") {
+        progressText.textContent = "⚡ 检测到在线字幕时长与当前视频不匹配(前序视频缓存)，自动切换至服务端深度通道...";
+      } else {
+        progressText.textContent = "⚡ 检测到在线字幕主要为纯音乐/占位标签，自动切换至服务端深度通道...";
+      }
       preExtractedSubtitles = null;
     } else if (tabRes && tabRes.status === "success" && tabRes.data && tabRes.data.subtitles && tabRes.data.subtitles.length > 0) {
-      preExtractedSubtitles = tabRes.data.subtitles;
-      if (tabRes.data.title) {
-        preTitle = tabRes.data.title;
-        videoTitleEl.textContent = preTitle;
+      // Defense: verify duration in sidepanel as well
+      const videoDur = tabRes.data.videoDuration || 0;
+      let maxSubTime = 0;
+      for (const s of tabRes.data.subtitles) {
+        if (s.to > maxSubTime) maxSubTime = s.to;
       }
-      subSource = tabRes.data.sub_source || "browser_direct";
-      progressText.textContent = `⚡ 网页官方字幕捕获成功 (共 ${preExtractedSubtitles.length} 句)，跳过下载直接总结...`;
+
+      if (videoDur > 0 && maxSubTime > (videoDur * 1.25 + 10)) {
+        console.warn(`[SidePanel] Discarding stale subtitles: maxSubTime ${maxSubTime}s > videoDur ${videoDur}s`);
+        preExtractedSubtitles = null;
+        progressText.textContent = "⚡ 网页字幕为前序视频缓存残留，已自动转入服务端通道重新转写...";
+      } else {
+        preExtractedSubtitles = tabRes.data.subtitles;
+        if (tabRes.data.title) {
+          preTitle = tabRes.data.title;
+          videoTitleEl.textContent = preTitle;
+        }
+        subSource = tabRes.data.sub_source || "browser_direct";
+        progressText.textContent = `⚡ 网页官方字幕捕获成功 (共 ${preExtractedSubtitles.length} 句)，跳过下载直接总结...`;
+      }
     }
   } catch (e) {
     console.warn("Direct subtitle probe fallback:", e);
@@ -694,6 +772,9 @@ async function startSummarize() {
           btnSummarize.disabled = false;
           progressContainer.classList.add("hidden");
 
+          if (!data.url && currentActiveTab) {
+            data.url = currentActiveTab.url;
+          }
           currentSummaryData = data;
           emptyStateEl.classList.add("hidden");
           mindmapViewEl.classList.remove("hidden");
@@ -1701,6 +1782,17 @@ async function fetchAndRenderLogs() {
     if (!res.ok) {
       if (res.status === 404) {
         if (logsStatusHint) logsStatusHint.textContent = "⚠️ 后台尚未加载日志接口，请在设置中点击【🔄 重启服务】";
+        if (logsList && lastLogText === "") {
+          logsList.innerHTML = `
+            <div class="log-empty" style="padding:40px 20px;text-align:center;color:#f59e0b;">
+              <div style="font-size:24px;margin-bottom:8px;">⚠️</div>
+              <div style="font-weight:600;font-size:14px;margin-bottom:6px;">后台服务版本较旧，尚未加载实时日志接口</div>
+              <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;">
+                请点击右上角【设置 ⚙️】➔【🔄 重启本地服务】<br>或双击运行 backend 目录下的 start_server.bat 即可实时显示日志。
+              </div>
+            </div>
+          `;
+        }
       } else {
         if (logsStatusHint) logsStatusHint.textContent = `⚠️ 获取日志失败 (HTTP ${res.status})`;
       }
@@ -1852,8 +1944,9 @@ detectCurrentVideoTab();
 restoreSessionState();
 
 chrome.tabs.onActivated.addListener(detectCurrentVideoTab);
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === "complete") {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Capture both full reloads and SPA history pushState/title navigation
+  if (changeInfo.status === "complete" || changeInfo.url || changeInfo.title) {
     detectCurrentVideoTab();
   }
 });

@@ -68,6 +68,42 @@ def is_valid_dialogue_subtitles(subtitles: list[dict], video_duration: float = 0
 
     return True
 
+def get_video_expected_duration(url: str) -> float:
+    """Fast probe of video duration in seconds (<=0.2s) without downloading media"""
+    match = re.search(r'(BV[a-zA-Z0-9]+)', url, re.IGNORECASE)
+    if match:
+        bvid = match.group(1)
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://www.bilibili.com"
+            }
+            view_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+            req = urllib.request.Request(view_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                return float(data.get('data', {}).get('duration', 0))
+        except Exception as e:
+            print(f"[DurationProbe] Error: {e}")
+    return 0.0
+
+def is_subtitles_duration_consistent(subtitles: list[dict], expected_duration: float) -> tuple[bool, str]:
+    """Check if subtitle timestamps match the real video duration to prevent stale subtitles from previous video"""
+    if not subtitles or expected_duration <= 0:
+        return True, "ok"
+    
+    max_ts = max((float(s.get("to", 0.0)) for s in subtitles), default=0.0)
+    
+    # 1. Stale overflow check: Subtitles cannot exceed 125% of video duration (plus 15s grace buffer)
+    if max_ts > (expected_duration * 1.25 + 15.0):
+        return False, f"字幕时间戳({max_ts:.1f}s)严重超出视频时长({expected_duration:.1f}s)，判定为前序视频缓存串台"
+
+    # 2. Incomplete check: For videos >= 90s, subtitles cannot end before 35% of video
+    if expected_duration >= 90.0 and max_ts < (expected_duration * 0.35):
+        return False, f"字幕时间戳({max_ts:.1f}s)明显远低于视频时长({expected_duration:.1f}s)，判定为残缺字幕"
+
+    return True, "ok"
+
 def get_bilibili_subtitles(url: str, progress_callback=None) -> tuple[list[dict], dict] | None:
     """Fast channel: Attempt to extract subtitles from Bilibili via web API"""
     match = re.search(r'(BV[a-zA-Z0-9]+)', url, re.IGNORECASE)

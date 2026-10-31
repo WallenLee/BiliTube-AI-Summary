@@ -114,6 +114,8 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
     const cid = viewData.data.cid;
     const title = getPageVideoTitle() || viewData.data.title || document.title;
     const author = viewData.data.owner ? viewData.data.owner.name : "UP主";
+    const video = findActiveVideo();
+    const videoDuration = parseFloat(viewData.data.duration || (video ? video.duration : 0)) || 0;
 
     // 2. Query player v2 API (authenticated by current session)
     const playerRes = await fetch(`https://api.bilibili.com/x/player/v2?bvid=${bvid}&cid=${cid}`, {
@@ -150,8 +152,43 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
       content: (item.content || "").trim()
     })).filter(item => item.content.length > 0);
 
+    // Duration Consistency Check: prevent stale subtitles from previous video in SPA navigation
+    let maxTimestamp = 0;
+    for (const item of subtitles) {
+      if (item.to > maxTimestamp) maxTimestamp = item.to;
+    }
+
+    if (videoDuration > 0) {
+      // If subtitle extends beyond 125% of video duration, it's definitely from another video!
+      if (maxTimestamp > (videoDuration * 1.25 + 10)) {
+        console.warn(`[ContentScript] Stale subtitles detected! Max timestamp ${maxTimestamp}s > video duration ${videoDuration}s. Discarding.`);
+        return {
+          subtitles: [],
+          rejected: true,
+          reason: "duration_mismatch",
+          videoDuration: videoDuration,
+          maxTimestamp: maxTimestamp,
+          title: title,
+          author: author
+        };
+      }
+      // If video is >= 90s but subtitle duration is less than 35% of total video
+      if (videoDuration >= 90 && maxTimestamp < (videoDuration * 0.35)) {
+        console.warn(`[ContentScript] Incomplete subtitles detected! Max timestamp ${maxTimestamp}s << video duration ${videoDuration}s. Discarding.`);
+        return {
+          subtitles: [],
+          rejected: true,
+          reason: "duration_incomplete",
+          videoDuration: videoDuration,
+          maxTimestamp: maxTimestamp,
+          title: title,
+          author: author
+        };
+      }
+    }
+
     // Triple-Check Quality Guard: Reject if mostly background music / noise tags
-    if (!isValidDialogueSubtitles(subtitles)) {
+    if (!isValidDialogueSubtitles(subtitles, videoDuration)) {
       console.warn("[ContentScript] In-browser subtitles rejected: failed Triple-Check dialogue density check (mostly BGM/music/noise).");
       return {
         subtitles: [],
@@ -166,6 +203,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
       subtitles: subtitles,
       title: title,
       author: author,
+      videoDuration: videoDuration,
       sub_source: `bilibili_browser_${bestSub.lan_doc || 'ai_zh'}`
     };
   } catch (err) {

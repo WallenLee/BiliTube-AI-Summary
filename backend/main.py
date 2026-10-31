@@ -12,7 +12,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import load_config, save_config
-from dual_sub_engine import extract_subtitles_pipeline, is_valid_dialogue_subtitles
+from dual_sub_engine import (
+    extract_subtitles_pipeline,
+    is_valid_dialogue_subtitles,
+    get_video_expected_duration,
+    is_subtitles_duration_consistent
+)
 from ai_gemini import generate_video_summary, build_chat_prompt, stream_gemini_chat
 from exporter import export_summary_to_file, open_file_locally
 
@@ -64,6 +69,11 @@ if not isinstance(sys.stderr, LogTee):
 _boot_time = datetime.datetime.now().strftime("%H:%M:%S")
 log_buffer.append(f"[{_boot_time}] [System] 🚀 BiliTube 调度后台已启动 (监听端口: 8765)")
 log_buffer.append(f"[{_boot_time}] [System] 实时运行日志拦截器就绪，准备接收解析任务")
+
+def log_system_event(msg: str):
+    t_str = datetime.datetime.now().strftime("%H:%M:%S")
+    log_buffer.append(f"[{t_str}] [System] {msg}")
+    print(f"[System] {msg}")
 
 app = FastAPI(title="Video Summary & Mindmap Studio API")
 
@@ -133,14 +143,28 @@ def run_summarize_workflow(task_id: str, url: str, user_title: str, pre_subtitle
 
     try:
         meta = {"title": user_title or "视频总结", "author": "UP主/作者", "url": url}
-        if pre_subtitles and len(pre_subtitles) > 0 and is_valid_dialogue_subtitles(pre_subtitles):
+        
+        # Rigorous Double-Defense: Validate dialogue density AND duration consistency
+        use_pre = False
+        if pre_subtitles and len(pre_subtitles) > 0:
+            if not is_valid_dialogue_subtitles(pre_subtitles):
+                log_system_event("⚠️ 网页捕获字幕有效对白不足(主要为BGM/音乐/噪音占位符)，丢弃并转入服务端通道")
+                progress_callback("⚠️ 网页捕获的在线字幕主要为纯音乐/占位符，自动转入服务端通道...")
+            else:
+                expected_dur = get_video_expected_duration(url)
+                dur_ok, dur_msg = is_subtitles_duration_consistent(pre_subtitles, expected_dur)
+                if not dur_ok:
+                    log_system_event(f"⚠️ {dur_msg}，强制丢弃并转入服务端深度转写通道！")
+                    progress_callback(f"⚠️ {dur_msg}，自动转入服务端通道重新转写...")
+                else:
+                    use_pre = True
+
+        if use_pre:
             progress_callback(f"⚡ 成功捕获原生字幕 (共 {len(pre_subtitles)} 句)，跳过下载直接提炼！")
             subtitles = pre_subtitles
             meta["sub_source"] = sub_source or "browser_direct_ai"
         else:
-            if pre_subtitles and len(pre_subtitles) > 0:
-                progress_callback("⚠️ 网页捕获的在线字幕主要为纯音乐/占位符，自动转入服务端通道...")
-            else:
+            if not pre_subtitles:
                 progress_callback("开始解析视频链接与字幕通道...")
             subtitles, meta = extract_subtitles_pipeline(url, progress_callback=progress_callback)
 
