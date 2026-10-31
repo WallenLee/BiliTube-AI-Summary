@@ -69,6 +69,9 @@ const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
 const btnBrowseFolder = document.getElementById("btn-browse-folder");
 const cfgSaveDirInput = document.getElementById("cfg-save-dir");
+const btnRestartService = document.getElementById("btn-restart-service");
+const settingsServiceStatus = document.getElementById("settings-service-status");
+const restartHint = document.getElementById("restart-hint");
 
 // --- Session Persistence Management ---
 let activeTabName = "mindmap-view";
@@ -224,6 +227,10 @@ async function checkServiceHealth() {
     if (res.ok) {
       serviceStatusEl.textContent = "🟢 调度服务在线";
       serviceStatusEl.className = "status-badge online";
+      if (settingsServiceStatus) {
+        settingsServiceStatus.textContent = "● 服务正常在线";
+        settingsServiceStatus.className = "status-badge online";
+      }
       return true;
     }
   } catch (e) {
@@ -231,6 +238,10 @@ async function checkServiceHealth() {
   }
   serviceStatusEl.textContent = "🔴 调度服务未启动";
   serviceStatusEl.className = "status-badge offline";
+  if (settingsServiceStatus) {
+    settingsServiceStatus.textContent = "● 服务未启动";
+    settingsServiceStatus.className = "status-badge offline";
+  }
   return false;
 }
 
@@ -1360,6 +1371,73 @@ btnCloseSettings.addEventListener("click", () => {
 
 btnSaveSettings.addEventListener("click", saveSettings);
 btnSummarize.addEventListener("click", startSummarize);
+
+// Restart Backend Service Logic
+if (btnRestartService) {
+  btnRestartService.addEventListener("click", async () => {
+    if (btnRestartService.disabled) return;
+
+    btnRestartService.disabled = true;
+    btnRestartService.innerHTML = '<span class="btn-icon">⏳</span> 正在重启服务...';
+    if (restartHint) restartHint.textContent = "正在释放旧端口并重启后台进程，约耗时 1~2 秒...";
+
+    if (settingsServiceStatus) {
+      settingsServiceStatus.textContent = "● 正在平滑重启...";
+      settingsServiceStatus.className = "status-badge checking";
+    }
+    serviceStatusEl.textContent = "🟡 正在重启服务...";
+    serviceStatusEl.className = "status-badge checking";
+
+    try {
+      await fetch(`${API_BASE}/api/restart`, { method: "POST" });
+    } catch (e) {
+      // Expected if old server process exits and closes connection quickly
+    }
+
+    // Poll /api/health until server comes back online
+    let attempts = 0;
+    const maxAttempts = 30; // 30 * 500ms = 15 seconds
+    const checkInterval = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch(`${API_BASE}/api/health`, { method: "GET" });
+        if (res.ok) {
+          clearInterval(checkInterval);
+          serviceStatusEl.textContent = "🟢 调度服务在线";
+          serviceStatusEl.className = "status-badge online";
+          if (settingsServiceStatus) {
+            settingsServiceStatus.textContent = "● 服务已重新就绪";
+            settingsServiceStatus.className = "status-badge online";
+          }
+          if (restartHint) restartHint.textContent = "✅ 服务重启成功！最新代码已成功载入";
+          btnRestartService.innerHTML = '<span class="btn-icon">✅</span> 重启成功！';
+
+          setTimeout(() => {
+            btnRestartService.disabled = false;
+            btnRestartService.innerHTML = '<span class="btn-icon">🔄</span> 重启本地服务';
+            if (restartHint) restartHint.textContent = "更新代码后点击此处，后台将自动重启并载入最新代码";
+          }, 2500);
+          return;
+        }
+      } catch (e) {
+        // Still in the process of starting up
+      }
+
+      if (attempts >= maxAttempts) {
+        clearInterval(checkInterval);
+        serviceStatusEl.textContent = "🔴 调度服务未启动";
+        serviceStatusEl.className = "status-badge offline";
+        if (settingsServiceStatus) {
+          settingsServiceStatus.textContent = "● 重启超时未响应";
+          settingsServiceStatus.className = "status-badge offline";
+        }
+        if (restartHint) restartHint.textContent = "⚠️ 重启等待超时，请确认是否需要手动双击运行 start_server.bat";
+        btnRestartService.disabled = false;
+        btnRestartService.innerHTML = '<span class="btn-icon">🔄</span> 重试重启';
+      }
+    }, 500);
+  });
+}
 
 // Init
 checkServiceHealth();

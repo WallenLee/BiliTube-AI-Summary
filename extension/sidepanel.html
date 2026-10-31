@@ -217,6 +217,18 @@
               生成后直接自动保存（默认不勾选，只在点击「保存这篇」时才存入本地）
             </label>
           </div>
+
+          <!-- Service Management & Restart Control -->
+          <div class="form-group service-control-group">
+            <label>本地调度服务管理</label>
+            <div class="service-control-row">
+              <span id="settings-service-status" class="status-badge checking">检查服务中...</span>
+              <button type="button" id="btn-restart-service" class="restart-service-btn" title="程序更新或服务异常时平滑重启后台进程">
+                <span class="btn-icon">🔄</span> 重启本地服务
+              </button>
+            </div>
+            <small id="restart-hint" class="restart-hint">更新代码后点击此处，后台将自动重启并载入最新代码</small>
+          </div>
         </div>
         <div class="modal-footer">
           <button id="btn-save-settings" class="primary-btn">保存配置</button>

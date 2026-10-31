@@ -281,6 +281,39 @@ async def chat_endpoint(req: ChatRequest):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+@app.post("/api/restart")
+def restart_server_endpoint(background_tasks: BackgroundTasks):
+    """Trigger graceful server restart by spawning a detached process after releasing port 8765"""
+    def restart_process():
+        import time
+        import subprocess
+        import sys
+        import os
+
+        # Give 0.3s for the HTTP response to be completely flushed to the client
+        time.sleep(0.3)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        python_exe = sys.executable.replace("'", "''")
+        escaped_dir = current_dir.replace("'", "''")
+
+        # PowerShell command: wait 800ms for current socket to close, then launch uvicorn
+        ps_cmd = (
+            f"Start-Sleep -Milliseconds 800; "
+            f"cd '{escaped_dir}'; "
+            f"& '{python_exe}' -m uvicorn main:app --host 127.0.0.1 --port 8765"
+        )
+
+        subprocess.Popen(
+            ["powershell", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+            cwd=current_dir,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        time.sleep(0.1)
+        os._exit(0)
+
+    background_tasks.add_task(restart_process)
+    return {"status": "ok", "message": "服务正在平滑重启中，请稍候..."}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8765, reload=False)
