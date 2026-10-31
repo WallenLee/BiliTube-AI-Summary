@@ -159,6 +159,54 @@ async function clearSessionState() {
   }
 }
 
+function updateSaveButtonsState() {
+  if (!currentSummaryData || !currentSummaryData.markdown) {
+    btnSaveSummary.classList.add("hidden");
+    if (btnOpenLocalDoc) btnOpenLocalDoc.classList.add("hidden");
+    if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
+    return;
+  }
+
+  // 1. Show Open Local Doc if file has been saved
+  if (currentSummaryData.file_path) {
+    if (btnOpenLocalDoc) {
+      btnOpenLocalDoc.classList.remove("hidden");
+      btnOpenLocalDoc.onclick = () => openSavedLocalDocument(currentSummaryData.file_path);
+    }
+    if (btnOpenObsidian) {
+      btnOpenObsidian.classList.remove("hidden");
+      btnOpenObsidian.textContent = "📂 打开本地文档";
+      btnOpenObsidian.onclick = () => openSavedLocalDocument(currentSummaryData.file_path);
+    }
+  } else {
+    if (btnOpenLocalDoc) btnOpenLocalDoc.classList.add("hidden");
+    if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
+  }
+
+  // 2. Always show Save Summary button as long as summary is present
+  btnSaveSummary.classList.remove("hidden");
+  btnSaveSummary.disabled = false;
+
+  if (currentSummaryData.file_path) {
+    const totalUserRounds = (chatHistory || []).filter(item => item.role === "user").length;
+    const savedRounds = (currentSummaryData.saved_chat_rounds !== undefined)
+      ? currentSummaryData.saved_chat_rounds
+      : totalUserRounds;
+    const newRounds = totalUserRounds - savedRounds;
+
+    if (newRounds > 0) {
+      btnSaveSummary.innerHTML = `<span class="btn-icon">💾</span><span class="btn-text">更新保存 (+${newRounds}条新问答)</span>`;
+      btnSaveSummary.title = `已有 ${newRounds} 条新的伴读问答未存入文档，点击可更新覆盖`;
+    } else {
+      btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">更新已存文档</span>';
+      btnSaveSummary.title = "已保存至本地，点击可重新选择问答并覆盖更新";
+    }
+  } else {
+    btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
+    btnSaveSummary.title = "将当前总结保存为 .md 文件";
+  }
+}
+
 async function restoreSessionState() {
   try {
     if (!storageArea) return false;
@@ -239,22 +287,7 @@ async function restoreSessionState() {
 
     // 5. Show Action Buttons
     btnClearAll.classList.remove("hidden");
-    if (currentSummaryData.file_path) {
-      btnSaveSummary.classList.add("hidden");
-      btnOpenLocalDoc.classList.remove("hidden");
-      btnOpenLocalDoc.onclick = () => openSavedLocalDocument(currentSummaryData.file_path);
-      if (btnOpenObsidian) {
-        btnOpenObsidian.classList.remove("hidden");
-        btnOpenObsidian.textContent = "📂 打开本地文档";
-        btnOpenObsidian.onclick = () => openSavedLocalDocument(currentSummaryData.file_path);
-      }
-    } else {
-      btnSaveSummary.classList.remove("hidden");
-      btnSaveSummary.disabled = false;
-      btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
-      btnOpenLocalDoc.classList.add("hidden");
-      if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
-    }
+    updateSaveButtonsState();
 
     // 6. Switch tab styles & fit markmap
     switchToTab(activeTabName);
@@ -868,24 +901,8 @@ async function startSummarize() {
           // Show Action Buttons
           btnClearAll.classList.remove("hidden");
 
-          if (data.file_path) {
-            // Auto-saved
-            btnSaveSummary.classList.add("hidden");
-            btnOpenLocalDoc.classList.remove("hidden");
-            btnOpenLocalDoc.onclick = () => openSavedLocalDocument(data.file_path);
-            if (btnOpenObsidian) {
-              btnOpenObsidian.classList.remove("hidden");
-              btnOpenObsidian.textContent = "📂 打开本地文档";
-              btnOpenObsidian.onclick = () => openSavedLocalDocument(data.file_path);
-            }
-          } else {
-            // Manual Save Mode
-            btnSaveSummary.classList.remove("hidden");
-            btnSaveSummary.disabled = false;
-            btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
-            btnOpenLocalDoc.classList.add("hidden");
-            if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
-          }
+          currentSummaryData.saved_chat_rounds = 0;
+          updateSaveButtonsState();
         } else if (data.status === "error") {
           eventSource.close();
           btnSummarize.disabled = false;
@@ -973,7 +990,15 @@ async function openExportModal() {
   // Format date and clean file name
   const today = new Date().toISOString().slice(0, 10);
   const cleanTitle = rawTitle.replace(/[\\/*?:"<>|]/g, '').trim();
-  if (exportFilePreview) exportFilePreview.textContent = `[${today}] ${cleanTitle}.md`;
+
+  if (currentSummaryData.file_path) {
+    const fileName = currentSummaryData.file_path.split(/[\\/]/).pop();
+    if (exportFilePreview) exportFilePreview.textContent = `${fileName} (覆盖更新)`;
+    if (btnConfirmExport) btnConfirmExport.innerHTML = '<span class="btn-icon">💾</span> 确认更新覆盖文档';
+  } else {
+    if (exportFilePreview) exportFilePreview.textContent = `[${today}] ${cleanTitle}.md`;
+    if (btnConfirmExport) btnConfirmExport.innerHTML = '<span class="btn-icon">💾</span> 确认保存文档';
+  }
 
   // Fetch configured save directory
   try {
@@ -1021,7 +1046,8 @@ async function confirmExportMarkdown() {
   const checkboxes = exportQaListEl ? exportQaListEl.querySelectorAll(".export-qa-checkbox:checked") : [];
   const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.getAttribute("data-index"), 10));
 
-  let finalMarkdown = currentSummaryData.markdown;
+  let baseMarkdown = currentSummaryData.markdown.replace(/\n\n---\n\n## 💬 伴读延伸问答记录[\s\S]*$/, '');
+  let finalMarkdown = baseMarkdown;
 
   // Append selected Q&A
   if (selectedIndices.length > 0) {
@@ -1036,9 +1062,11 @@ async function confirmExportMarkdown() {
     finalMarkdown += `\n\n---\n\n## 💬 伴读延伸问答记录\n\n${qaSections.join('\n\n')}\n`;
   }
 
+  const isUpdating = Boolean(currentSummaryData.file_path);
+
   if (btnConfirmExport) {
     btnConfirmExport.disabled = true;
-    btnConfirmExport.innerHTML = '<span class="btn-icon">⏳</span> 正在保存...';
+    btnConfirmExport.innerHTML = `<span class="btn-icon">⏳</span> 正在${isUpdating ? '更新覆盖' : '保存'}...`;
   }
 
   try {
@@ -1047,7 +1075,8 @@ async function confirmExportMarkdown() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         markdown: finalMarkdown,
-        title: currentSummaryData.title || (currentActiveTab && currentActiveTab.title) || "视频总结"
+        title: currentSummaryData.title || (currentActiveTab && currentActiveTab.title) || "视频总结",
+        target_file_path: currentSummaryData.file_path || ""
       })
     });
 
@@ -1057,23 +1086,15 @@ async function confirmExportMarkdown() {
       if (currentSummaryData) {
         currentSummaryData.file_path = data.file_path;
         currentSummaryData.obsidian_uri = data.obsidian_uri;
+        currentSummaryData.saved_chat_rounds = (chatHistory || []).filter(item => item.role === "user").length;
         saveSessionState();
       }
 
-      // Switch buttons to "Open Local Doc"
-      btnSaveSummary.classList.add("hidden");
-      if (btnOpenLocalDoc) {
-        btnOpenLocalDoc.classList.remove("hidden");
-        btnOpenLocalDoc.onclick = () => openSavedLocalDocument(data.file_path);
-      }
+      // Refresh button displays
+      updateSaveButtonsState();
 
-      if (btnOpenObsidian) {
-        btnOpenObsidian.classList.remove("hidden");
-        btnOpenObsidian.textContent = "📂 打开本地文档";
-        btnOpenObsidian.onclick = () => openSavedLocalDocument(data.file_path);
-      }
-
-      alert(`✅ 成功保存为 Markdown 文档！\n\n文件路径：\n${data.file_path}${selectedIndices.length > 0 ? `\n（已包含 ${selectedIndices.length} 组伴读问答记录）` : ''}`);
+      const actionDesc = isUpdating ? "更新覆盖" : "保存";
+      alert(`✅ 成功${actionDesc}为 Markdown 文档！\n\n文件路径：\n${data.file_path}${selectedIndices.length > 0 ? `\n（已包含 ${selectedIndices.length} 组伴读问答记录）` : ''}`);
     } else {
       alert("保存失败: " + (data.message || "未知错误"));
     }
@@ -1082,7 +1103,11 @@ async function confirmExportMarkdown() {
   } finally {
     if (btnConfirmExport) {
       btnConfirmExport.disabled = false;
-      btnConfirmExport.innerHTML = '<span class="btn-icon">💾</span> 确认保存文档';
+      if (currentSummaryData && currentSummaryData.file_path) {
+        btnConfirmExport.innerHTML = '<span class="btn-icon">💾</span> 确认更新覆盖文档';
+      } else {
+        btnConfirmExport.innerHTML = '<span class="btn-icon">💾</span> 确认保存文档';
+      }
     }
   }
 }
@@ -1182,6 +1207,7 @@ function switchToTab(targetTab) {
 
   if (currentSummaryData) {
     saveSessionState();
+    updateSaveButtonsState();
   }
 }
 
@@ -1807,6 +1833,7 @@ async function sendChatMessage(userText, quote = "") {
     chatHistory.push({ role: "assistant", text: fullAssistantText });
 
     saveSessionState();
+    updateSaveButtonsState();
 
   } catch (err) {
     assistantContentEl.innerHTML = `<span style="color:#f87171;">⚠️ 提问失败: ${escapeHtml(err.message || "调度服务未响应")}</span>`;

@@ -115,6 +115,7 @@ class OpenFileRequest(BaseModel):
 class SaveSummaryRequest(BaseModel):
     markdown: str
     title: str
+    target_file_path: Optional[str] = ""
 
 class SelectFolderRequest(BaseModel):
     initial_dir: Optional[str] = ""
@@ -296,7 +297,7 @@ async def stream_task_progress(task_id: str):
 @app.post("/api/save-summary")
 def save_summary_endpoint(req: SaveSummaryRequest):
     try:
-        file_path, obsidian_uri = export_summary_to_file(req.markdown, req.title)
+        file_path, obsidian_uri = export_summary_to_file(req.markdown, req.title, req.target_file_path or "")
         return {
             "status": "ok",
             "file_path": file_path,

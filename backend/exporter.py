@@ -11,25 +11,30 @@ def sanitize_filename(name: str) -> str:
     cleaned = cleaned.replace('\n', ' ').replace('\r', '').strip()
     return cleaned[:80] if cleaned else "未命名总结"
 
-def export_summary_to_file(markdown_content: str, title: str) -> tuple[str, str]:
-    """Save summary markdown to the configured storage path"""
+def export_summary_to_file(markdown_content: str, title: str, target_file_path: str = "") -> tuple[str, str]:
+    """Save summary markdown to the configured storage path.
+    If target_file_path is provided and exists (or its directory exists),
+    it will overwrite the existing file in-place rather than creating duplicate copies.
+    """
     cfg = load_config()
     save_dir = cfg.get("save_directory") or os.path.join(os.path.expanduser("~"), "Documents", "VideoSummaries")
-    
-    # Ensure directory exists
     os.makedirs(save_dir, exist_ok=True)
 
-    date_prefix = time.strftime("%Y-%m-%d")
-    safe_title = sanitize_filename(title)
-    file_name = f"[{date_prefix}] {safe_title}.md"
-    file_path = os.path.join(save_dir, file_name)
+    # Check if we should overwrite an existing file directly
+    if target_file_path and (os.path.exists(target_file_path) or os.path.isdir(os.path.dirname(target_file_path))):
+        file_path = os.path.normpath(target_file_path)
+    else:
+        date_prefix = time.strftime("%Y-%m-%d")
+        safe_title = sanitize_filename(title)
+        file_name = f"[{date_prefix}] {safe_title}.md"
+        file_path = os.path.join(save_dir, file_name)
 
-    # Handle duplicates if same file already exists
-    counter = 1
-    base_name = f"[{date_prefix}] {safe_title}"
-    while os.path.exists(file_path):
-        file_path = os.path.join(save_dir, f"{base_name} ({counter}).md")
-        counter += 1
+        # Handle duplicates only when creating NEW file
+        counter = 1
+        base_name = f"[{date_prefix}] {safe_title}"
+        while os.path.exists(file_path):
+            file_path = os.path.join(save_dir, f"{base_name} ({counter}).md")
+            counter += 1
 
     # Ensure content is clean standard Markdown without raw HTML tag leakage
     clean_content = re.sub(r'<a\s+[^>]*href=["\']seek:(\d+)["\'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?</a>', r'[\2](seek:\1)', markdown_content)
