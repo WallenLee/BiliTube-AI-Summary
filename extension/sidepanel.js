@@ -15,7 +15,23 @@ const videoUrlEl = document.getElementById("video-url");
 
 const btnSummarize = document.getElementById("btn-summarize");
 const btnSaveSummary = document.getElementById("btn-save-summary");
+const btnOpenLocalDoc = document.getElementById("btn-open-local-doc");
 const btnClearAll = document.getElementById("btn-clear-all");
+const btnOpenObsidian = document.getElementById("btn-open-obsidian");
+
+// Export Modal Elements
+const exportModal = document.getElementById("export-modal");
+const btnCloseExport = document.getElementById("btn-close-export");
+const btnCancelExport = document.getElementById("btn-cancel-export");
+const btnConfirmExport = document.getElementById("btn-confirm-export");
+const exportFilePreview = document.getElementById("export-file-preview");
+const exportDirPreview = document.getElementById("export-dir-preview");
+const exportQaCountEl = document.getElementById("export-qa-count");
+const exportQaListEl = document.getElementById("export-qa-list");
+const exportQaEmptyEl = document.getElementById("export-qa-empty");
+const exportQaActionBtns = document.getElementById("export-qa-action-btns");
+const btnQaSelectAll = document.getElementById("btn-qa-select-all");
+const btnQaDeselectAll = document.getElementById("btn-qa-deselect-all");
 
 const progressContainer = document.getElementById("progress-container");
 const progressText = document.getElementById("progress-text");
@@ -60,7 +76,6 @@ const tabButtons = document.querySelectorAll(".tab-btn");
 const btnThemeToggle = document.getElementById("btn-theme-toggle");
 const btnResetMap = document.getElementById("btn-reset-map");
 const btnCopyMd = document.getElementById("btn-copy-md");
-const btnOpenObsidian = document.getElementById("btn-open-obsidian");
 
 // Settings Modal
 const settingsModal = document.getElementById("settings-modal");
@@ -226,15 +241,19 @@ async function restoreSessionState() {
     btnClearAll.classList.remove("hidden");
     if (currentSummaryData.file_path) {
       btnSaveSummary.classList.add("hidden");
-      btnOpenObsidian.classList.remove("hidden");
-      btnOpenObsidian.onclick = () => {
-        if (currentSummaryData.obsidian_uri) window.open(currentSummaryData.obsidian_uri);
-      };
+      btnOpenLocalDoc.classList.remove("hidden");
+      btnOpenLocalDoc.onclick = () => openSavedLocalDocument(currentSummaryData.file_path);
+      if (btnOpenObsidian) {
+        btnOpenObsidian.classList.remove("hidden");
+        btnOpenObsidian.textContent = "📂 打开本地文档";
+        btnOpenObsidian.onclick = () => openSavedLocalDocument(currentSummaryData.file_path);
+      }
     } else {
       btnSaveSummary.classList.remove("hidden");
       btnSaveSummary.disabled = false;
       btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
-      btnOpenObsidian.classList.add("hidden");
+      btnOpenLocalDoc.classList.add("hidden");
+      if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
     }
 
     // 6. Switch tab styles & fit markmap
@@ -666,6 +685,7 @@ async function startSummarize() {
 
   btnSummarize.disabled = true;
   btnSaveSummary.classList.add("hidden");
+  btnOpenLocalDoc.classList.add("hidden");
   btnClearAll.classList.add("hidden");
   progressContainer.classList.remove("hidden");
   progressText.textContent = "⚡ 正在尝试从当前网页直接捕获官方/AI字幕...";
@@ -807,16 +827,20 @@ async function startSummarize() {
           if (data.file_path) {
             // Auto-saved
             btnSaveSummary.classList.add("hidden");
-            btnOpenObsidian.classList.remove("hidden");
-            btnOpenObsidian.onclick = () => {
-              if (data.obsidian_uri) window.open(data.obsidian_uri);
-            };
+            btnOpenLocalDoc.classList.remove("hidden");
+            btnOpenLocalDoc.onclick = () => openSavedLocalDocument(data.file_path);
+            if (btnOpenObsidian) {
+              btnOpenObsidian.classList.remove("hidden");
+              btnOpenObsidian.textContent = "📂 打开本地文档";
+              btnOpenObsidian.onclick = () => openSavedLocalDocument(data.file_path);
+            }
           } else {
             // Manual Save Mode
             btnSaveSummary.classList.remove("hidden");
             btnSaveSummary.disabled = false;
             btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
-            btnOpenObsidian.classList.add("hidden");
+            btnOpenLocalDoc.classList.add("hidden");
+            if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
           }
         } else if (data.status === "error") {
           eventSource.close();
@@ -842,50 +866,202 @@ async function startSummarize() {
   }
 }
 
-// Manual Save Handler
-btnSaveSummary.addEventListener("click", async () => {
+// --- 7.5. Document Export & Q&A Selection ---
+function escapeHtml(str) {
+  if (!str) return "";
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function extractQAPairsFromHistory() {
+  const pairs = [];
+  if (!chatHistory || chatHistory.length === 0) return pairs;
+  for (let i = 0; i < chatHistory.length; i++) {
+    const item = chatHistory[i];
+    if (item.role === "user") {
+      let answer = "";
+      if (i + 1 < chatHistory.length && chatHistory[i + 1].role === "assistant") {
+        answer = chatHistory[i + 1].text || "";
+      }
+      pairs.push({
+        id: pairs.length,
+        question: item.text || "",
+        answer: answer
+      });
+    }
+  }
+  return pairs;
+}
+
+async function openSavedLocalDocument(filePath) {
+  const targetPath = filePath || (currentSummaryData && currentSummaryData.file_path);
+  if (!targetPath) {
+    alert("未找到已保存的文档路径");
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/api/open-file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_path: targetPath })
+    });
+    const data = await res.json();
+    if (!res.ok || data.status !== "ok") {
+      throw new Error(data.message || `HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.warn("Open file locally fallback:", err);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(targetPath);
+      alert(`已成功复制文件完整路径到剪贴板：\n${targetPath}\n\n您可直接在本地默认编辑器中打开。`);
+    } else {
+      alert(`文档已保存至：\n${targetPath}`);
+    }
+  }
+}
+
+async function openExportModal() {
   if (!currentSummaryData || !currentSummaryData.markdown) return;
 
-  btnSaveSummary.disabled = true;
-  btnSaveSummary.innerHTML = '<span>⏳ 保存中...</span>';
+  const qaPairs = extractQAPairsFromHistory();
+  const rawTitle = currentSummaryData.title || (currentActiveTab && currentActiveTab.title) || "视频总结";
+
+  // Format date and clean file name
+  const today = new Date().toISOString().slice(0, 10);
+  const cleanTitle = rawTitle.replace(/[\\/*?:"<>|]/g, '').trim();
+  if (exportFilePreview) exportFilePreview.textContent = `[${today}] ${cleanTitle}.md`;
+
+  // Fetch configured save directory
+  try {
+    const res = await fetch(`${API_BASE}/api/config`);
+    if (res.ok) {
+      const cfg = await res.json();
+      if (exportDirPreview) exportDirPreview.textContent = cfg.save_directory || "系统默认文档目录 (Documents/VideoSummaries)";
+    }
+  } catch (e) {
+    if (exportDirPreview) exportDirPreview.textContent = "系统默认文档目录";
+  }
+
+  // Populate Q&A List
+  if (exportQaListEl) exportQaListEl.innerHTML = "";
+  if (qaPairs.length === 0) {
+    if (exportQaEmptyEl) exportQaEmptyEl.classList.remove("hidden");
+    if (exportQaActionBtns) exportQaActionBtns.classList.add("hidden");
+    if (exportQaCountEl) exportQaCountEl.textContent = "0 组问答";
+  } else {
+    if (exportQaEmptyEl) exportQaEmptyEl.classList.add("hidden");
+    if (exportQaActionBtns) exportQaActionBtns.classList.remove("hidden");
+    if (exportQaCountEl) exportQaCountEl.textContent = `共 ${qaPairs.length} 组问答`;
+
+    qaPairs.forEach((pair, idx) => {
+      const itemEl = document.createElement("label");
+      itemEl.className = "export-qa-item";
+      itemEl.innerHTML = `
+        <input type="checkbox" class="export-qa-checkbox" data-index="${idx}" checked>
+        <div class="export-qa-content">
+          <div class="export-qa-q">❓ ${escapeHtml(pair.question)}</div>
+          <div class="export-qa-a">🤖 ${escapeHtml(pair.answer.slice(0, 75))}${pair.answer.length > 75 ? '...' : ''}</div>
+        </div>
+      `;
+      if (exportQaListEl) exportQaListEl.appendChild(itemEl);
+    });
+  }
+
+  if (exportModal) exportModal.classList.remove("hidden");
+}
+
+async function confirmExportMarkdown() {
+  if (!currentSummaryData || !currentSummaryData.markdown) return;
+
+  const qaPairs = extractQAPairsFromHistory();
+  const checkboxes = exportQaListEl ? exportQaListEl.querySelectorAll(".export-qa-checkbox:checked") : [];
+  const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.getAttribute("data-index"), 10));
+
+  let finalMarkdown = currentSummaryData.markdown;
+
+  // Append selected Q&A
+  if (selectedIndices.length > 0) {
+    const qaSections = [];
+    selectedIndices.forEach((idx, qIdx) => {
+      const pair = qaPairs[idx];
+      if (pair) {
+        qaSections.push(`### ❓ Q${qIdx + 1}：${pair.question}\n\n> **🤖 AI 伴读解答**：\n>\n> ${pair.answer.replace(/\n/g, '\n> ')}`);
+      }
+    });
+
+    finalMarkdown += `\n\n---\n\n## 💬 伴读延伸问答记录\n\n${qaSections.join('\n\n')}\n`;
+  }
+
+  if (btnConfirmExport) {
+    btnConfirmExport.disabled = true;
+    btnConfirmExport.innerHTML = '<span class="btn-icon">⏳</span> 正在保存...';
+  }
 
   try {
     const res = await fetch(`${API_BASE}/api/save-summary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        markdown: currentSummaryData.markdown,
-        title: currentSummaryData.title || "视频总结"
+        markdown: finalMarkdown,
+        title: currentSummaryData.title || (currentActiveTab && currentActiveTab.title) || "视频总结"
       })
     });
 
     const data = await res.json();
-    if (data.status === "ok") {
+    if (res.ok && data.status === "ok") {
+      if (exportModal) exportModal.classList.add("hidden");
       if (currentSummaryData) {
         currentSummaryData.file_path = data.file_path;
         currentSummaryData.obsidian_uri = data.obsidian_uri;
         saveSessionState();
       }
-      btnSaveSummary.innerHTML = '<span class="btn-icon">✅</span><span class="btn-text">已存入本地 (点击打开)</span>';
-      btnSaveSummary.disabled = false;
-      btnSaveSummary.onclick = () => {
-        if (data.obsidian_uri) window.open(data.obsidian_uri);
-      };
-      btnOpenObsidian.classList.remove("hidden");
-      btnOpenObsidian.onclick = () => {
-        if (data.obsidian_uri) window.open(data.obsidian_uri);
-      };
+
+      // Switch buttons to "Open Local Doc"
+      btnSaveSummary.classList.add("hidden");
+      if (btnOpenLocalDoc) {
+        btnOpenLocalDoc.classList.remove("hidden");
+        btnOpenLocalDoc.onclick = () => openSavedLocalDocument(data.file_path);
+      }
+
+      if (btnOpenObsidian) {
+        btnOpenObsidian.classList.remove("hidden");
+        btnOpenObsidian.textContent = "📂 打开本地文档";
+        btnOpenObsidian.onclick = () => openSavedLocalDocument(data.file_path);
+      }
+
+      alert(`✅ 成功保存为 Markdown 文档！\n\n文件路径：\n${data.file_path}${selectedIndices.length > 0 ? `\n（已包含 ${selectedIndices.length} 组伴读问答记录）` : ''}`);
     } else {
       alert("保存失败: " + (data.message || "未知错误"));
-      btnSaveSummary.disabled = false;
-      btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
     }
-  } catch (e) {
-    alert("保存出错: " + e.message);
-    btnSaveSummary.disabled = false;
-    btnSaveSummary.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text">保存这篇到本地</span>';
+  } catch (err) {
+    alert("保存出错: " + err.message);
+  } finally {
+    if (btnConfirmExport) {
+      btnConfirmExport.disabled = false;
+      btnConfirmExport.innerHTML = '<span class="btn-icon">💾</span> 确认保存文档';
+    }
   }
-});
+}
+
+// Export Modal Event Bindings
+btnSaveSummary.addEventListener("click", openExportModal);
+if (btnCloseExport) btnCloseExport.addEventListener("click", () => exportModal.classList.add("hidden"));
+if (btnCancelExport) btnCancelExport.addEventListener("click", () => exportModal.classList.add("hidden"));
+if (btnConfirmExport) btnConfirmExport.addEventListener("click", confirmExportMarkdown);
+
+if (btnQaSelectAll && exportQaListEl) {
+  btnQaSelectAll.addEventListener("click", () => {
+    exportQaListEl.querySelectorAll(".export-qa-checkbox").forEach(cb => cb.checked = true);
+  });
+}
+if (btnQaDeselectAll && exportQaListEl) {
+  btnQaDeselectAll.addEventListener("click", () => {
+    exportQaListEl.querySelectorAll(".export-qa-checkbox").forEach(cb => cb.checked = false);
+  });
+}
+if (btnOpenLocalDoc) {
+  btnOpenLocalDoc.addEventListener("click", () => openSavedLocalDocument());
+}
 
 // Clear / Reset Handler
 btnClearAll.addEventListener("click", async () => {
@@ -917,8 +1093,9 @@ btnClearAll.addEventListener("click", async () => {
     emptyStateEl.classList.remove("hidden");
 
     btnSaveSummary.classList.add("hidden");
+    if (btnOpenLocalDoc) btnOpenLocalDoc.classList.add("hidden");
     btnClearAll.classList.add("hidden");
-    btnOpenObsidian.classList.add("hidden");
+    if (btnOpenObsidian) btnOpenObsidian.classList.add("hidden");
   }
 });
 

@@ -49,6 +49,10 @@
           <span class="btn-icon">💾</span>
           <span class="btn-text">保存这篇到本地</span>
         </button>
+        <button id="btn-open-local-doc" class="secondary-btn hidden" title="在系统默认应用中打开已保存的 Markdown 文档">
+          <span class="btn-icon">📂</span>
+          <span class="btn-text">打开本地文档</span>
+        </button>
         <button id="btn-clear-all" class="ghost-btn hidden" title="清空当前内容，不留缓存">
           <span>🧹 清空</span>
         </button>
@@ -105,7 +109,7 @@
       <div id="doc-view" class="tab-pane hidden">
         <div class="doc-actions-bar">
           <button id="btn-copy-md" class="small-btn">📋 复制 Markdown</button>
-          <button id="btn-open-obsidian" class="small-btn highlight hidden">📂 打开已存笔记</button>
+          <button id="btn-open-obsidian" class="small-btn highlight hidden">📂 打开本地文档</button>
         </div>
         <div id="doc-content" class="markdown-body"></div>
       </div>
@@ -213,12 +217,12 @@
           </div>
 
           <div class="form-group">
-            <label for="cfg-save-dir">Markdown 存储路径 (Obsidian 库)</label>
+            <label for="cfg-save-dir">Markdown 文档存储路径</label>
             <div class="input-with-button">
               <input type="text" id="cfg-save-dir" placeholder="点击右侧按钮选择电脑文件夹..." readonly>
               <button type="button" id="btn-browse-folder" class="browse-btn">📁 浏览选择...</button>
             </div>
-            <small>点击按钮在弹窗中选择文件夹，或指定 Obsidian 笔记库</small>
+            <small>点击按钮在弹窗中选择文件夹，自由指定本地保存目录</small>
           </div>
 
           <div class="form-group font-scale-group">
@@ -289,6 +293,66 @@
             自动滚动到底部
           </label>
           <span id="logs-status-hint" class="logs-status-hint">● 实时监听中 (每 1.5 秒更新)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export / Save Markdown Modal with Q&A Selection -->
+    <div id="export-modal" class="modal hidden">
+      <div class="modal-content export-modal-content">
+        <div class="modal-header">
+          <div class="modal-header-title">
+            <span class="modal-header-icon">💾</span>
+            <h3>保存为 Markdown 文档</h3>
+          </div>
+          <button id="btn-close-export" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="export-file-info">
+            <div class="export-info-row">
+              <span class="export-label">目标文件：</span>
+              <span id="export-file-preview" class="export-filename">加载中...</span>
+            </div>
+            <div class="export-info-row">
+              <span class="export-label">保存目录：</span>
+              <span id="export-dir-preview" class="export-dir-path">-</span>
+            </div>
+          </div>
+
+          <div class="export-section">
+            <label class="export-section-title">
+              <input type="checkbox" checked disabled>
+              <span><b>📄 视频核心总结与交互导图</b> <span class="badge-required">必选</span></span>
+            </label>
+            <p class="export-desc">包含一句话主旨、核心深度洞见与 Markmap 脉络思维导图。</p>
+          </div>
+
+          <div class="export-section">
+            <div class="export-section-header">
+              <label class="export-section-title">
+                <b>💬 伴读问答对话记录</b>
+                <span id="export-qa-count" class="badge">0 组问答</span>
+              </label>
+              <div class="export-qa-actions" id="export-qa-action-btns">
+                <button type="button" id="btn-qa-select-all" class="text-link-btn">全选</button>
+                <span class="divider">|</span>
+                <button type="button" id="btn-qa-deselect-all" class="text-link-btn">全不选</button>
+              </div>
+            </div>
+            <p class="export-desc">自由勾选需要随同正文一并保存的 AI 深度问答，未勾选的将不会写入文档：</p>
+            
+            <div id="export-qa-list" class="export-qa-list"></div>
+            <div id="export-qa-empty" class="export-qa-empty hidden">
+              暂无伴读问答记录，将仅保存视频总结报告。
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-cancel-export" class="ghost-btn">取消</button>
+          <button type="button" id="btn-confirm-export" class="primary-btn">
+            <span class="btn-icon">💾</span>
+            <span class="btn-text">确认保存文档</span>
+          </button>
         </div>
       </div>
     </div>

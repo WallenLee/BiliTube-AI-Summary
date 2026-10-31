@@ -1955,3 +1955,212 @@ body.light-theme .font-scale-control-row .small-action-btn:hover {
 body.light-theme #settings-font-scale-val {
   color: #0284c7;
 }
+
+/* --- Export Modal with Q&A Selection --- */
+.export-modal-content {
+  max-width: 440px;
+  max-height: 85vh;
+}
+
+.export-file-info {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.export-info-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.export-info-row:last-child {
+  margin-bottom: 0;
+}
+
+.export-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.export-filename {
+  color: var(--primary-color);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.export-dir-path {
+  color: var(--text-secondary);
+  word-break: break-all;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.export-section {
+  margin-bottom: 14px;
+}
+
+.export-section:last-child {
+  margin-bottom: 0;
+}
+
+.export-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.export-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.export-section-title input[type="checkbox"] {
+  accent-color: var(--primary-color);
+  cursor: pointer;
+}
+
+.badge-required {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.export-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 3px 0 8px 0;
+  line-height: 1.4;
+}
+
+.export-qa-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.text-link-btn {
+  background: none;
+  border: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+.text-link-btn:hover {
+  opacity: 0.8;
+}
+
+.export-qa-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  background: var(--bg-tertiary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.export-qa-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.export-qa-item:hover {
+  border-color: var(--primary-color);
+  background: var(--bg-hover);
+}
+
+.export-qa-item input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--primary-color);
+  cursor: pointer;
+}
+
+.export-qa-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.export-qa-q {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+.export-qa-a {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.export-qa-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+/* Light Theme Adaptations for Export Modal */
+body.light-theme .export-file-info {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+body.light-theme .export-qa-list {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+body.light-theme .export-qa-item {
+  background: #ffffff;
+  border-color: #e2e8f0;
+}
+
+body.light-theme .export-qa-item:hover {
+  background: #f8fafc;
+  border-color: #0284c7;
+}
+
+body.light-theme .badge-required {
+  background: rgba(2, 132, 199, 0.12);
+  color: #0284c7;
+}
+
+body.light-theme .text-link-btn {
+  color: #0284c7;
+}
