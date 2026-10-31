@@ -27,6 +27,13 @@
       </div>
     </header>
 
+    <!-- Font Scale Floating HUD Toast -->
+    <div id="font-scale-hud" class="font-scale-hud hidden" title="点击或按 Ctrl+0 恢复默认字号">
+      <span class="hud-icon">🔍</span>
+      <span id="font-scale-text">字号: 100%</span>
+      <span class="hud-hint">(Ctrl+0 复位)</span>
+    </div>
+
     <!-- Video Info Card -->
     <section class="video-card">
       <div class="video-badge" id="video-platform">检测视频中...</div>
@@ -212,6 +219,17 @@
               <button type="button" id="btn-browse-folder" class="browse-btn">📁 浏览选择...</button>
             </div>
             <small>点击按钮在弹窗中选择文件夹，或指定 Obsidian 笔记库</small>
+          </div>
+
+          <div class="form-group font-scale-group">
+            <label>全局文字字号调节 (当前: <span id="settings-font-scale-val">100%</span>)</label>
+            <div class="font-scale-control-row">
+              <button type="button" id="btn-font-dec" class="small-action-btn" title="字号减小 (或按 Ctrl + 减号)">A-</button>
+              <input type="range" id="cfg-font-scale" min="75" max="200" step="5" value="100">
+              <button type="button" id="btn-font-inc" class="small-action-btn" title="字号放大 (或按 Ctrl + 加号)">A+</button>
+              <button type="button" id="btn-font-reset" class="small-action-btn" title="恢复默认100% (Ctrl+0)">重置</button>
+            </div>
+            <small>在侧边栏任意区域按住 <b>Ctrl + 鼠标滚轮</b> 即可随时无极缩放；按 <b>Ctrl + 0</b> 随时复位。</small>
           </div>
 
           <div class="form-group checkbox-group">

@@ -87,6 +87,15 @@ const logsList = document.getElementById("logs-list");
 const chkAutoScroll = document.getElementById("chk-auto-scroll");
 const logsStatusHint = document.getElementById("logs-status-hint");
 
+// Font Scaling Elements
+const fontScaleHud = document.getElementById("font-scale-hud");
+const fontScaleText = document.getElementById("font-scale-text");
+const cfgFontScale = document.getElementById("cfg-font-scale");
+const settingsFontScaleVal = document.getElementById("settings-font-scale-val");
+const btnFontDec = document.getElementById("btn-font-dec");
+const btnFontInc = document.getElementById("btn-font-inc");
+const btnFontReset = document.getElementById("btn-font-reset");
+
 let logPollTimer = null;
 let lastLogText = "";
 
@@ -892,6 +901,117 @@ if (btnThemeToggle) {
   });
 }
 
+// Global Stepless Font Scaling with Ctrl + Mouse Wheel & Persistence
+const FONT_SCALE_STORAGE_KEY = "BILITUBE_FONT_SCALE";
+const MIN_FONT_SCALE = 0.75;
+const MAX_FONT_SCALE = 2.0;
+let currentFontScale = 1.0;
+let hudTimeout = null;
+
+function showFontScaleHud(percentStr) {
+  if (!fontScaleHud || !fontScaleText) return;
+  fontScaleText.textContent = `字号: ${percentStr}`;
+  fontScaleHud.classList.remove("hidden");
+  if (hudTimeout) clearTimeout(hudTimeout);
+  hudTimeout = setTimeout(() => {
+    fontScaleHud.classList.add("hidden");
+  }, 1200);
+}
+
+function applyFontScale(scale, showHud = true) {
+  currentFontScale = Math.min(MAX_FONT_SCALE, Math.max(MIN_FONT_SCALE, Math.round(scale * 100) / 100));
+  document.documentElement.style.setProperty("--font-scale", currentFontScale);
+
+  const percent = Math.round(currentFontScale * 100);
+  const percentStr = `${percent}%`;
+
+  if (cfgFontScale) cfgFontScale.value = percent;
+  if (settingsFontScaleVal) settingsFontScaleVal.textContent = percentStr;
+
+  if (showHud) {
+    showFontScaleHud(percentStr);
+  }
+
+  try {
+    localStorage.setItem(FONT_SCALE_STORAGE_KEY, currentFontScale.toString());
+  } catch (e) {}
+
+  // Trigger markmap layout refit if active
+  if (markmapInstance && markmapViewEl && !markmapViewEl.classList.contains("hidden")) {
+    if (window._markmapFitTimer) clearTimeout(window._markmapFitTimer);
+    window._markmapFitTimer = setTimeout(() => {
+      try {
+        if (markmapInstance.fit) markmapInstance.fit();
+      } catch (e) {}
+    }, 200);
+  }
+}
+
+function initFontScale() {
+  let saved = "1.0";
+  try {
+    saved = localStorage.getItem(FONT_SCALE_STORAGE_KEY) || "1.0";
+  } catch (e) {}
+  const scale = parseFloat(saved) || 1.0;
+  applyFontScale(scale, false);
+}
+
+// Wheel listener on window: Ctrl + Mouse Wheel for stepless continuous scaling
+window.addEventListener("wheel", (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    const step = 0.04;
+    const delta = e.deltaY < 0 ? step : -step;
+    applyFontScale(currentFontScale + delta, true);
+  }
+}, { passive: false });
+
+// Keyboard listener: Ctrl + 0 (Reset), Ctrl + Plus/Minus
+window.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
+      e.preventDefault();
+      applyFontScale(1.0, true);
+    } else if (e.key === "=" || e.key === "+" || e.code === "Equal" || e.code === "NumpadAdd") {
+      e.preventDefault();
+      applyFontScale(currentFontScale + 0.05, true);
+    } else if (e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract") {
+      e.preventDefault();
+      applyFontScale(currentFontScale - 0.05, true);
+    }
+  }
+});
+
+// Click or double click HUD to quickly reset to 100%
+if (fontScaleHud) {
+  fontScaleHud.addEventListener("click", () => {
+    applyFontScale(1.0, true);
+  });
+}
+
+// Settings modal buttons & range slider
+if (cfgFontScale) {
+  cfgFontScale.addEventListener("input", (e) => {
+    const val = parseFloat(e.target.value) / 100;
+    applyFontScale(val, true);
+  });
+}
+if (btnFontDec) {
+  btnFontDec.addEventListener("click", () => {
+    applyFontScale(currentFontScale - 0.05, true);
+  });
+}
+if (btnFontInc) {
+  btnFontInc.addEventListener("click", () => {
+    applyFontScale(currentFontScale + 0.05, true);
+  });
+}
+if (btnFontReset) {
+  btnFontReset.addEventListener("click", () => {
+    applyFontScale(1.0, true);
+  });
+}
+
 // Reset Map
 btnResetMap.addEventListener("click", () => {
   if (markmapInstance && markmapInstance.fit) {
@@ -1633,6 +1753,7 @@ if (btnRefreshLogs) {
 
 // Init
 initTheme();
+initFontScale();
 checkServiceHealth();
 detectCurrentVideoTab();
 restoreSessionState();
