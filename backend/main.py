@@ -1,0 +1,235 @@
+import asyncio
+import json
+import uuid
+from typing import Dict, Any, Optional
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from config import load_config, save_config
+from dual_sub_engine import extract_subtitles_pipeline
+from ai_gemini import generate_video_summary
+from exporter import export_summary_to_file, open_file_locally
+
+app = FastAPI(title="Video Summary & Mindmap Studio API")
+
+# Enable CORS for browser extension
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory store for task states and SSE queues
+tasks: Dict[str, Dict[str, Any]] = {}
+task_queues: Dict[str, asyncio.Queue] = {}
+
+class SummarizeRequest(BaseModel):
+    url: str
+    title: Optional[str] = ""
+    pre_extracted_subtitles: Optional[list] = None
+    sub_source: Optional[str] = ""
+
+class ConfigRequest(BaseModel):
+    gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
+    proxy_url: Optional[str] = None
+    save_directory: Optional[str] = None
+    auto_save: Optional[bool] = None
+
+class OpenFileRequest(BaseModel):
+    file_path: str
+
+class SaveSummaryRequest(BaseModel):
+    markdown: str
+    title: str
+
+class SelectFolderRequest(BaseModel):
+    initial_dir: Optional[str] = ""
+
+async def notify_task(task_id: str, data: dict):
+    """Push event to task's SSE queue and update state"""
+    if task_id in tasks:
+        tasks[task_id].update(data)
+    if task_id in task_queues:
+        await task_queues[task_id].put(data)
+
+def run_summarize_workflow(task_id: str, url: str, user_title: str, pre_subtitles: list = None, sub_source: str = ""):
+    """Synchronous pipeline executed in background executor"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    def progress_callback(msg: str):
+        loop.run_until_complete(notify_task(task_id, {
+            "status": "processing",
+            "message": msg
+        }))
+
+    try:
+        meta = {"title": user_title or "视频总结", "author": "UP主/作者", "url": url}
+        if pre_subtitles and len(pre_subtitles) > 0:
+            progress_callback(f"⚡ 成功捕获原生字幕 (共 {len(pre_subtitles)} 句)，跳过下载直接提炼！")
+            subtitles = pre_subtitles
+            meta["sub_source"] = sub_source or "browser_direct_ai"
+        else:
+            progress_callback("开始解析视频链接与字幕通道...")
+            subtitles, meta = extract_subtitles_pipeline(url, progress_callback=progress_callback)
+
+        if not subtitles:
+            raise RuntimeError("未提取到任何字幕或语音内容")
+
+        if user_title and not meta.get("title"):
+            meta["title"] = user_title
+
+        progress_callback(f"字幕提取就绪 (共 {len(subtitles)} 句)，提交 Gemini 智能分析...")
+        markdown_result = generate_video_summary(subtitles, meta, progress_callback=progress_callback)
+
+        cfg = load_config()
+        file_path = ""
+        obsidian_uri = ""
+        if cfg.get("auto_save", False):
+            progress_callback("正在保存 Markdown 到本地知识库...")
+            file_path, obsidian_uri = export_summary_to_file(markdown_result, meta.get("title", "视频总结"))
+
+        # Mark done
+        loop.run_until_complete(notify_task(task_id, {
+            "status": "completed",
+            "message": "总结完成！",
+            "markdown": markdown_result,
+            "title": meta.get("title", "视频总结"),
+            "file_path": file_path,
+            "obsidian_uri": obsidian_uri,
+            "sub_source": meta.get("sub_source", "未知"),
+            "subtitles": subtitles
+        }))
+
+    except Exception as e:
+        print(f"[Workflow Error] {e}")
+        loop.run_until_complete(notify_task(task_id, {
+            "status": "error",
+            "message": f"处理失败: {str(e)}"
+        }))
+    finally:
+        loop.close()
+
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "app": "Video Summary & Mindmap Studio"}
+
+@app.get("/api/config")
+def get_config():
+    return load_config()
+
+@app.post("/api/config")
+def update_config(req: ConfigRequest):
+    new_data = {k: v for k, v in req.dict().items() if v is not None}
+    saved = save_config(new_data)
+    return {"status": "ok", "config": saved}
+
+@app.post("/api/summarize")
+async def start_summarize(req: SummarizeRequest, background_tasks: BackgroundTasks):
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL 不能为空")
+
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {
+        "task_id": task_id,
+        "url": url,
+        "status": "pending",
+        "message": "任务初始化中..."
+    }
+    task_queues[task_id] = asyncio.Queue()
+
+    # Launch background thread
+    background_tasks.add_task(
+        run_summarize_workflow,
+        task_id,
+        url,
+        req.title or "",
+        req.pre_extracted_subtitles,
+        req.sub_source or ""
+    )
+
+    return {"status": "started", "task_id": task_id}
+
+@app.get("/api/stream/{task_id}")
+async def stream_task_progress(task_id: str):
+    if task_id not in task_queues:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    async def event_generator():
+        queue = task_queues[task_id]
+        try:
+            # Yield initial status if exists
+            if task_id in tasks:
+                yield f"data: {json.dumps(tasks[task_id], ensure_ascii=False)}\n\n"
+
+            while True:
+                data = await queue.get()
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if data.get("status") in ["completed", "error"]:
+                    break
+        finally:
+            # Clean up queue when stream ends
+            if task_id in task_queues:
+                del task_queues[task_id]
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/api/save-summary")
+def save_summary_endpoint(req: SaveSummaryRequest):
+    try:
+        file_path, obsidian_uri = export_summary_to_file(req.markdown, req.title)
+        return {
+            "status": "ok",
+            "file_path": file_path,
+            "obsidian_uri": obsidian_uri
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/select-folder")
+def select_folder_endpoint(req: SelectFolderRequest):
+    try:
+        import os
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+
+        cfg = load_config()
+        init_dir = req.initial_dir or cfg.get("save_directory", "")
+        if not os.path.exists(init_dir):
+            init_dir = os.path.expanduser("~")
+
+        selected = filedialog.askdirectory(
+            title="选择视频总结保存目录",
+            initialdir=init_dir
+        )
+        root.destroy()
+
+        if selected:
+            norm_path = os.path.normpath(selected)
+            return {"status": "ok", "path": norm_path}
+        else:
+            return {"status": "cancelled", "path": ""}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/open-file")
+def open_file_endpoint(req: OpenFileRequest):
+    try:
+        open_file_locally(req.file_path)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8765, reload=False)
