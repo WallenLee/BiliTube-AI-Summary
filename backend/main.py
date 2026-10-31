@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from config import load_config, save_config
 from dual_sub_engine import extract_subtitles_pipeline
-from ai_gemini import generate_video_summary
+from ai_gemini import generate_video_summary, build_chat_prompt, stream_gemini_chat
 from exporter import export_summary_to_file, open_file_locally
 
 app = FastAPI(title="Video Summary & Mindmap Studio API")
@@ -49,6 +49,14 @@ class SaveSummaryRequest(BaseModel):
 
 class SelectFolderRequest(BaseModel):
     initial_dir: Optional[str] = ""
+
+class ChatRequest(BaseModel):
+    question: str
+    quote: Optional[str] = ""
+    video_title: Optional[str] = ""
+    summary_markdown: Optional[str] = ""
+    subtitles: Optional[list] = None
+    history: Optional[list] = None
 
 async def notify_task(task_id: str, data: dict):
     """Push event to task's SSE queue and update state"""
@@ -229,6 +237,49 @@ def open_file_endpoint(req: OpenFileRequest):
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat")
+async def chat_endpoint(req: ChatRequest):
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="提问内容不能为空")
+
+    prompt = build_chat_prompt(
+        question=req.question.strip(),
+        quote=req.quote or "",
+        video_title=req.video_title or "",
+        summary_markdown=req.summary_markdown or "",
+        subtitles=req.subtitles or [],
+        history=req.history or []
+    )
+
+    async def event_generator():
+        try:
+            loop = asyncio.get_event_loop()
+            queue = asyncio.Queue()
+
+            def produce():
+                try:
+                    for chunk in stream_gemini_chat(prompt):
+                        asyncio.run_coroutine_threadsafe(queue.put({"type": "token", "text": chunk, "chunk": chunk}), loop)
+                    asyncio.run_coroutine_threadsafe(queue.put({"type": "done"}), loop)
+                except Exception as e:
+                    asyncio.run_coroutine_threadsafe(queue.put({"type": "error", "error": str(e)}), loop)
+
+            import concurrent.futures
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            executor.submit(produce)
+
+            while True:
+                item = await queue.get()
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                if item.get("type") in ["done", "error"]:
+                    break
+            executor.shutdown(wait=False)
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn

@@ -63,6 +63,9 @@
       <button class="tab-btn" data-tab="transcript-view">
         <span class="tab-icon">🎙️</span> 字幕原文
       </button>
+      <button class="tab-btn" data-tab="chat-view">
+        <span class="tab-icon">💬</span> 伴读答疑
+      </button>
     </nav>
 
     <!-- Content Sections -->
@@ -110,7 +113,63 @@
           <div class="transcript-empty">暂无字幕内容</div>
         </div>
       </div>
+
+      <!-- Q&A Chat View Pane -->
+      <div id="chat-view" class="tab-pane hidden">
+        <div id="chat-messages" class="chat-messages">
+          <div id="chat-welcome" class="chat-welcome">
+            <div class="chat-welcome-icon">💬</div>
+            <div class="chat-welcome-title">视频知识伴读助手</div>
+            <div class="chat-welcome-desc">已融合全片带时间戳字幕与结构化总结。在“完整总结”中划选任意文字也可一键提问！</div>
+            <div class="quick-questions-label">💡 猜你想问（点击一键提问）：</div>
+            <div class="quick-questions-grid">
+              <button class="quick-pill" data-q="请用大白话通俗解释一下全片的核心论证逻辑与深层背景">💡 通俗解释全片核心逻辑</button>
+              <button class="quick-pill" data-q="原视频中作者提到了哪些具体的数据、关键案例或核心事实？">🔍 原片有哪些核心数据与案例</button>
+              <button class="quick-pill" data-q="作者在视频中表达的观点是否存在某些前提假设、局限性或反方视角？">⚔️ 分析观点的局限与前提</button>
+              <button class="quick-pill" data-q="如果想围绕本期视频的主题进一步深入学习，有什么进阶知识或拓展建议？">📚 推荐进阶知识与拓展</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Input Area -->
+        <div class="chat-input-wrapper">
+          <!-- Quote Bar (Hidden until text is quoted) -->
+          <div id="chat-quote-bar" class="chat-quote-bar hidden">
+            <div class="quote-content-wrapper">
+              <span class="quote-icon">📌</span>
+              <span class="quote-label">针对引用提问：</span>
+              <span id="chat-quote-text" class="quote-text"></span>
+            </div>
+            <button id="btn-cancel-quote" class="quote-close-btn" title="取消引用">&times;</button>
+          </div>
+
+          <!-- Input Row -->
+          <div class="chat-input-row">
+            <textarea id="chat-input" placeholder="输入您对视频的疑问 (Enter 发送，Shift+Enter 换行)..." rows="1"></textarea>
+            <button id="btn-send-chat" class="btn-send-chat" title="发送提问">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
     </main>
+
+    <!-- Floating Selection Popover for Doc View -->
+    <div id="selection-popover" class="selection-popover hidden">
+      <button id="pop-explain" class="pop-btn" title="用大白话通俗解释所选内容">
+        <span class="pop-icon">💡</span> 通俗解释
+      </button>
+      <div class="pop-divider"></div>
+      <button id="pop-evidence" class="pop-btn" title="展开作者在原片中的具体论据与数据">
+        <span class="pop-icon">🔍</span> 展开论据
+      </button>
+      <div class="pop-divider"></div>
+      <button id="pop-ask" class="pop-btn" title="针对所选内容在对话框中追问">
+        <span class="pop-icon">💬</span> 追问
+      </button>
+    </div>
 
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal hidden">

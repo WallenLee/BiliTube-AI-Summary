@@ -33,6 +33,28 @@ const transcriptSearchInput = document.getElementById("transcript-search");
 const transcriptCountEl = document.getElementById("transcript-count");
 const btnCopyTranscript = document.getElementById("btn-copy-transcript");
 
+// Chat & Q&A Elements
+const chatViewEl = document.getElementById("chat-view");
+const chatMessagesEl = document.getElementById("chat-messages");
+const chatWelcomeEl = document.getElementById("chat-welcome");
+const chatQuoteBarEl = document.getElementById("chat-quote-bar");
+const chatQuoteTextEl = document.getElementById("chat-quote-text");
+const btnCancelQuote = document.getElementById("btn-cancel-quote");
+const chatInputEl = document.getElementById("chat-input");
+const btnSendChat = document.getElementById("btn-send-chat");
+
+// Selection Popover Elements
+const selectionPopoverEl = document.getElementById("selection-popover");
+const popExplain = document.getElementById("pop-explain");
+const popEvidence = document.getElementById("pop-evidence");
+const popAsk = document.getElementById("pop-ask");
+
+let chatHistory = [];
+let currentQuotedText = "";
+let currentSelectedText = "";
+let isStreamingChat = false;
+let isInteractingWithPopover = false;
+
 // Tabs & Actions
 const tabButtons = document.querySelectorAll(".tab-btn");
 const btnThemeToggle = document.getElementById("btn-theme-toggle");
@@ -137,6 +159,7 @@ function markdownToMarkmapTree(markdownText) {
     content = content.replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
 
     // Extract and format timestamp [MM:SS](seek:123) into clean clickable links
+    let timePillHtml = "";
     const tsMatch = content.match(/\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/);
     if (tsMatch) {
       const timeStr = tsMatch[1];
@@ -146,10 +169,8 @@ function markdownToMarkmapTree(markdownText) {
         content = content.replace(tsMatch[0], '').trim();
       } else {
         lastTimestamp = timeStr;
-        content = content.replace(
-          tsMatch[0],
-          `<a class="timestamp-pill" href="seek:${sec}" title="点击跳转至 ${timeStr}">⏱️ ${timeStr}</a>`
-        ).trim();
+        timePillHtml = `<a class="timestamp-pill" href="seek:${sec}" title="点击跳转至 ${timeStr}">⏱️ ${timeStr}</a>`;
+        content = content.replace(tsMatch[0], '').trim();
       }
     }
 
@@ -158,6 +179,15 @@ function markdownToMarkmapTree(markdownText) {
 
     // Remove stray outer quotes
     content = content.replace(/^["'“”\s]+|["'“”\s]+$/g, '');
+
+    // Add node ask button for interactive Q&A
+    const nodeTextPure = content.replace(/<[^>]+>/g, '').replace(/["']/g, '').trim();
+    if (nodeTextPure && depth >= 0) {
+      const safeTitle = nodeTextPure.slice(0, 30);
+      content = `${content} ${timePillHtml} <a class="node-ask-btn" data-node-title="${safeTitle}" title="针对此分支向 AI 提问">💬</a>`;
+    } else {
+      content = `${content} ${timePillHtml}`;
+    }
 
     const node = { content, children: [] };
     while (stack.length > 1 && stack[stack.length - 1].depth >= depth) {
@@ -321,6 +351,20 @@ function seekVideo(seconds) {
 }
 
 document.addEventListener("click", (e) => {
+  // 1. Mindmap node ask button
+  const askBtn = e.target.closest(".node-ask-btn");
+  if (askBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const nodeTitle = askBtn.getAttribute("data-node-title");
+    if (nodeTitle) {
+      switchToTab("chat-view");
+      sendChatMessage(`请结合原视频详细解析思维导图分支【${nodeTitle}】的论述细节与背景机制。`, nodeTitle);
+    }
+    return;
+  }
+
+  // 2. Video Seek Dispatcher
   const target = e.target.closest("a");
   if (!target) return;
 
@@ -425,6 +469,13 @@ async function startSummarize() {
           mindmapViewEl.classList.remove("hidden");
           docViewEl.classList.add("hidden");
           transcriptViewEl.classList.add("hidden");
+          chatViewEl.classList.add("hidden");
+
+          // Reset chat state for new video
+          chatHistory = [];
+          chatMessagesEl.innerHTML = "";
+          if (chatWelcomeEl) chatWelcomeEl.classList.remove("hidden");
+          clearQuote();
 
           // Reset tab buttons to mindmap active
           tabButtons.forEach(b => b.classList.remove("active"));
@@ -529,10 +580,17 @@ btnClearAll.addEventListener("click", () => {
     }
     transcriptListEl.innerHTML = "";
 
+    // Clear chat
+    chatHistory = [];
+    chatMessagesEl.innerHTML = "";
+    if (chatWelcomeEl) chatWelcomeEl.classList.remove("hidden");
+    clearQuote();
+
     // Hide panes, reveal empty state
     mindmapViewEl.classList.add("hidden");
     docViewEl.classList.add("hidden");
     transcriptViewEl.classList.add("hidden");
+    chatViewEl.classList.add("hidden");
     emptyStateEl.classList.remove("hidden");
 
     btnSaveSummary.classList.add("hidden");
@@ -541,27 +599,41 @@ btnClearAll.addEventListener("click", () => {
   }
 });
 
-// --- 8. Tab Switching ---
+// --- 8. Tab Switching & Chat Management ---
+function switchToTab(targetTab) {
+  tabButtons.forEach(b => {
+    if (b.getAttribute("data-tab") === targetTab) {
+      b.classList.add("active");
+    } else {
+      b.classList.remove("active");
+    }
+  });
+
+  mindmapViewEl.classList.add("hidden");
+  docViewEl.classList.add("hidden");
+  transcriptViewEl.classList.add("hidden");
+  chatViewEl.classList.add("hidden");
+
+  if (targetTab === "mindmap-view") {
+    mindmapViewEl.classList.remove("hidden");
+    if (markmapInstance && markmapInstance.fit) {
+      setTimeout(() => markmapInstance.fit(), 100);
+    }
+  } else if (targetTab === "doc-view") {
+    docViewEl.classList.remove("hidden");
+  } else if (targetTab === "transcript-view") {
+    transcriptViewEl.classList.remove("hidden");
+  } else if (targetTab === "chat-view") {
+    chatViewEl.classList.remove("hidden");
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    setTimeout(() => chatInputEl.focus(), 80);
+  }
+}
+
 tabButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
-    tabButtons.forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-
     const targetTab = btn.getAttribute("data-tab");
-    mindmapViewEl.classList.add("hidden");
-    docViewEl.classList.add("hidden");
-    transcriptViewEl.classList.add("hidden");
-
-    if (targetTab === "mindmap-view") {
-      mindmapViewEl.classList.remove("hidden");
-      if (markmapInstance && markmapInstance.fit) {
-        setTimeout(() => markmapInstance.fit(), 100);
-      }
-    } else if (targetTab === "doc-view") {
-      docViewEl.classList.remove("hidden");
-    } else if (targetTab === "transcript-view") {
-      transcriptViewEl.classList.remove("hidden");
-    }
+    switchToTab(targetTab);
   });
 });
 
@@ -604,7 +676,345 @@ btnCopyMd.addEventListener("click", () => {
   }
 });
 
-// --- 9. Settings Management & Native Folder Browser ---
+// --- 9. Chat, Q&A & Floating Selection Popover ---
+
+// Helper: HTML escape
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// Quote Management
+function setQuote(text) {
+  currentQuotedText = (text || "").trim();
+  if (currentQuotedText) {
+    chatQuoteTextEl.textContent = currentQuotedText;
+    chatQuoteBarEl.classList.remove("hidden");
+  } else {
+    clearQuote();
+  }
+}
+
+function clearQuote() {
+  currentQuotedText = "";
+  chatQuoteTextEl.textContent = "";
+  chatQuoteBarEl.classList.add("hidden");
+  chatInputEl.placeholder = "输入您对视频的疑问 (Enter 发送，Shift+Enter 换行)...";
+}
+
+if (btnCancelQuote) {
+  btnCancelQuote.addEventListener("click", clearQuote);
+}
+
+// Floating Selection Popover Logic (划词提问)
+function handleSelectionChange() {
+  if (isInteractingWithPopover) return;
+
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) {
+    if (!isInteractingWithPopover && selectionPopoverEl) {
+      selectionPopoverEl.classList.add("hidden");
+      currentSelectedText = "";
+    }
+    return;
+  }
+
+  // Ensure selection is inside docContentEl
+  const range = sel.getRangeAt(0);
+  const commonAncestor = range.commonAncestorContainer;
+  const isInsideDoc = docContentEl && docContentEl.contains(commonAncestor);
+
+  if (!isInsideDoc) {
+    if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
+    currentSelectedText = "";
+    return;
+  }
+
+  const text = sel.toString().trim();
+  if (text.length < 2) {
+    if (selectionPopoverEl) selectionPopoverEl.classList.add("hidden");
+    currentSelectedText = "";
+    return;
+  }
+
+  currentSelectedText = text;
+
+  // Calculate popover positioning
+  const rect = range.getBoundingClientRect();
+  const popoverWidth = selectionPopoverEl.offsetWidth || 230;
+  const popoverHeight = selectionPopoverEl.offsetHeight || 36;
+
+  let left = rect.left + (rect.width / 2) - (popoverWidth / 2);
+  let top = rect.top - popoverHeight - 8;
+
+  // Keep within viewport boundaries
+  left = Math.max(10, Math.min(window.innerWidth - popoverWidth - 10, left));
+  if (top < 10) {
+    top = rect.bottom + 8;
+  }
+
+  selectionPopoverEl.style.left = `${left}px`;
+  selectionPopoverEl.style.top = `${top}px`;
+  selectionPopoverEl.classList.remove("hidden");
+}
+
+document.addEventListener("selectionchange", handleSelectionChange);
+if (docContentEl) {
+  docContentEl.addEventListener("mouseup", () => {
+    setTimeout(handleSelectionChange, 10);
+  });
+}
+
+if (selectionPopoverEl) {
+  selectionPopoverEl.addEventListener("mousedown", (e) => {
+    isInteractingWithPopover = true;
+    e.preventDefault(); // Prevent text deselection on popover click
+  });
+  selectionPopoverEl.addEventListener("mouseup", () => {
+    setTimeout(() => {
+      isInteractingWithPopover = false;
+    }, 200);
+  });
+}
+
+if (popExplain) {
+  popExplain.addEventListener("click", () => {
+    if (!currentSelectedText) return;
+    const quote = currentSelectedText;
+    selectionPopoverEl.classList.add("hidden");
+    switchToTab("chat-view");
+    sendChatMessage("请用通俗易懂的语言解释划线概念或原委，并列举一个生动的比喻或实际案例。", quote);
+    window.getSelection()?.removeAllRanges();
+  });
+}
+
+if (popEvidence) {
+  popEvidence.addEventListener("click", () => {
+    if (!currentSelectedText) return;
+    const quote = currentSelectedText;
+    selectionPopoverEl.classList.add("hidden");
+    switchToTab("chat-view");
+    sendChatMessage("视频作者是如何论证或说明这一点的？请结合原片证据与具体时间戳详细展开。", quote);
+    window.getSelection()?.removeAllRanges();
+  });
+}
+
+if (popAsk) {
+  popAsk.addEventListener("click", () => {
+    if (!currentSelectedText) return;
+    const quote = currentSelectedText;
+    selectionPopoverEl.classList.add("hidden");
+    switchToTab("chat-view");
+    setQuote(quote);
+    chatInputEl.placeholder = "针对划线内容输入您的问题 (按 Enter 发送)...";
+    chatInputEl.focus();
+    window.getSelection()?.removeAllRanges();
+  });
+}
+
+// Quick Question Pills
+document.querySelectorAll(".quick-pill").forEach((pill) => {
+  pill.addEventListener("click", () => {
+    const q = pill.getAttribute("data-q");
+    if (q) {
+      sendChatMessage(q);
+    }
+  });
+});
+
+// Render Markdown for Chat with Timestamp Pills
+function renderChatMarkdown(rawMarkdown, containerEl, showCursor = false) {
+  if (!rawMarkdown) {
+    containerEl.innerHTML = showCursor ? '<span class="chat-cursor"></span>' : '';
+    return;
+  }
+
+  let text = rawMarkdown;
+
+  // Clean any raw HTML tag leaks
+  text = text.replace(/<a\s+[^>]*href=["']seek:(\d+)["'][^>]*>.*?(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?).*?<\/a>/gi, '[$2](seek:$1)');
+  text = text.replace(/<a\s+class=["']timestamp-pill["'][^>]*>([\s\S]*?)<\/a>/gi, '$1');
+
+  // Convert [MM:SS](seek:123) or [⏱️ MM:SS](seek:123) to clickable timestamp pill
+  text = text.replace(
+    /\[(?:⏱️\s*)?(\d{1,2}:\d{2}(?::\d{2})?)\]\(seek:(\d+)\)/g,
+    '<a class="timestamp-pill" href="seek:$2" title="点击跳转原片对应时间">⏱️ $1</a>'
+  );
+
+  let html = "";
+  if (window.marked) {
+    html = window.marked.parse(text);
+  } else {
+    html = `<p>${escapeHtml(text)}</p>`;
+  }
+
+  if (showCursor) {
+    html += '<span class="chat-cursor"></span>';
+  }
+
+  containerEl.innerHTML = html;
+}
+
+// Send Chat Message & Handle SSE Stream
+async function sendChatMessage(userText, quote = "") {
+  const query = (userText || "").trim();
+  if (!query) return;
+
+  if (isStreamingChat) {
+    return;
+  }
+
+  if (!currentSummaryData || !currentSummaryData.markdown) {
+    alert("请先点击【开始智能总结】解析视频，之后方可使用伴读答疑功能！");
+    return;
+  }
+
+  const activeQuote = quote || currentQuotedText || "";
+  clearQuote();
+
+  // Hide welcome placeholder on first interaction
+  if (chatWelcomeEl) {
+    chatWelcomeEl.classList.add("hidden");
+  }
+
+  // 1. Render User Message
+  const userMsgEl = document.createElement("div");
+  userMsgEl.className = "chat-msg user";
+
+  let userContentHtml = "";
+  if (activeQuote) {
+    userContentHtml += `<div class="chat-quote-tag">引用: "${escapeHtml(activeQuote)}"</div>`;
+  }
+  userContentHtml += `<div class="chat-content">${escapeHtml(query).replace(/\n/g, '<br>')}</div>`;
+  userMsgEl.innerHTML = userContentHtml;
+  chatMessagesEl.appendChild(userMsgEl);
+
+  // Clear input & reset height
+  chatInputEl.value = "";
+  chatInputEl.style.height = "auto";
+
+  // 2. Render Assistant Message (Streaming Placeholder)
+  const assistantMsgEl = document.createElement("div");
+  assistantMsgEl.className = "chat-msg assistant";
+  const assistantContentEl = document.createElement("div");
+  assistantContentEl.className = "chat-content";
+  assistantContentEl.innerHTML = '<span class="chat-cursor"></span>';
+  assistantMsgEl.appendChild(assistantContentEl);
+  chatMessagesEl.appendChild(assistantMsgEl);
+
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+
+  // 3. Request Backend Stream
+  isStreamingChat = true;
+  btnSendChat.disabled = true;
+
+  const payload = {
+    question: query,
+    quote: activeQuote,
+    video_title: (currentActiveTab && currentActiveTab.title) || (currentSummaryData && currentSummaryData.title) || "",
+    summary_markdown: (currentSummaryData && currentSummaryData.markdown) || "",
+    subtitles: currentSubtitles || [],
+    history: chatHistory.slice(-8)
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      throw new Error(`服务响应异常 (${res.status})`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let fullAssistantText = "";
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const jsonStr = trimmed.replace(/^data:\s*/, "");
+        if (!jsonStr) continue;
+
+        try {
+          const data = JSON.parse(jsonStr);
+          const chunkText = data.chunk || data.text || "";
+          if (chunkText) {
+            fullAssistantText += chunkText;
+            renderChatMarkdown(fullAssistantText, assistantContentEl, true);
+            chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+          } else if (data.error) {
+            fullAssistantText += `\n\n> ⚠️ 回答出错: ${data.error}`;
+            renderChatMarkdown(fullAssistantText, assistantContentEl, false);
+          }
+        } catch (parseErr) {
+          // ignore stream parse errors
+        }
+      }
+    }
+
+    // Finalize assistant bubble
+    renderChatMarkdown(fullAssistantText, assistantContentEl, false);
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+
+    // Record round in conversation history
+    const recordedUserPrompt = activeQuote ? `[引用片段: "${activeQuote}"]\n${query}` : query;
+    chatHistory.push({ role: "user", text: recordedUserPrompt });
+    chatHistory.push({ role: "assistant", text: fullAssistantText });
+
+  } catch (err) {
+    assistantContentEl.innerHTML = `<span style="color:#f87171;">⚠️ 提问失败: ${escapeHtml(err.message || "调度服务未响应")}</span>`;
+  } finally {
+    isStreamingChat = false;
+    btnSendChat.disabled = false;
+    setTimeout(() => chatInputEl.focus(), 60);
+  }
+}
+
+// Chat Input Auto-Resize & Shortcuts
+if (chatInputEl) {
+  chatInputEl.addEventListener("input", () => {
+    chatInputEl.style.height = "auto";
+    chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 120) + "px";
+  });
+
+  chatInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const val = chatInputEl.value.trim();
+      if (val) {
+        sendChatMessage(val);
+      }
+    }
+  });
+}
+
+if (btnSendChat) {
+  btnSendChat.addEventListener("click", () => {
+    const val = chatInputEl.value.trim();
+    if (val) {
+      sendChatMessage(val);
+    }
+  });
+}
+
+// --- 10. Settings Management & Native Folder Browser ---
 async function loadSettings() {
   try {
     const res = await fetch(`${API_BASE}/api/config`);

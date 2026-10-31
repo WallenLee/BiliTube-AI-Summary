@@ -48,6 +48,125 @@ def prepare_transcript_text(subtitles: list[dict], max_tokens_chars: int = 15000
         full_text = full_text[:max_tokens_chars] + "\n...(后半部分字幕较长已节选)"
     return full_text
 
+def build_chat_prompt(
+    question: str,
+    quote: str = "",
+    video_title: str = "",
+    summary_markdown: str = "",
+    subtitles: list[dict] = None,
+    history: list[dict] = None
+) -> str:
+    """Build high-context prompt for Q&A with full transcript and summary"""
+    transcript_text = prepare_transcript_text(subtitles) if subtitles else "（暂无详细字幕）"
+    
+    prompt = f"""你是一位专业的视频伴读助手与知识问答导师。
+用户正在观看或阅读以下视频的精炼总结，并对视频中的观点、论据或相关概念提出了问题。
+请仔细结合视频信息、全文结构化总结以及原片全量带时间戳字幕，为用户提供客观准确、条理清晰、深入浅出的专业解答。
+
+【视频基本信息】
+标题：{video_title or '视频总结'}
+
+【全文结构化总结】
+{summary_markdown or '（暂无总结）'}
+
+【原片字幕记录（带精确时间戳）】
+{transcript_text}
+
+---
+【回答原则与要求】
+1. **忠实原片与通俗拓展结合**：
+   - 优先依据原片作者的论述因果、推演逻辑与事实数据作答；
+   - 若用户询问专业概念，请提供准确定义并结合日常生活中的生动案例进行白话比喻，降低理解门槛；
+   - 若用户询问观点是否有漏洞、局限或反方意见，请客观中立地分析其前提假设与边界。
+2. **精准时间戳溯源**：
+   - 当你的回答涉及视频原片中的具体论述、案例事实或数据时，**必须在对应文字后附带原片时间戳**，格式严格保持为：`[MM:SS](seek:秒数)`（例如 `[03:15](seek:195)`），以便用户点击直接跳转原视频对应画面核对！
+3. **输出排版**：
+   - 使用规范的 Markdown 格式输出，重点词汇加粗，层次分明，无需多余开场白套话，直接直入主题展开解答。
+"""
+    if quote and quote.strip():
+        prompt += f"\n【用户特别划选引用的内容】\n“{quote.strip()}”\n（请务必重点针对用户引用的这部分内容展开分析解答）\n"
+
+    if history and len(history) > 0:
+        prompt += "\n【上下文对话记录】\n"
+        for turn in history[-6:]:
+            r = "用户" if turn.get("role") == "user" else "AI助手"
+            c = turn.get("content", "").strip()
+            if c:
+                prompt += f"{r}: {c}\n"
+
+    prompt += f"\n用户当前提问：{question}\nAI导师解答："
+    return prompt
+
+def stream_gemini_chat(prompt: str, model: str = None):
+    """Stream response from Gemini API using multi-model fallback chain"""
+    cfg = load_config()
+    api_key = cfg.get("gemini_api_key", "").strip()
+    primary_model = model or cfg.get("gemini_model", "gemini-3.5-flash-lite")
+    proxy_url = cfg.get("proxy_url", "http://127.0.0.1:7897")
+
+    if not api_key:
+        raise ValueError("Gemini API Key 未配置，请在设置中输入 API Key")
+
+    chain = [primary_model]
+    for backup in ['gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.8-flash']:
+        if backup not in chain:
+            chain.append(backup)
+
+    if proxy_url:
+        handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+        opener = urllib.request.build_opener(handler)
+    else:
+        opener = urllib.request.build_opener()
+
+    last_error = None
+    for idx, model_name in enumerate(chain):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?alt=sse&key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.4,
+                "maxOutputTokens": 4096
+            }
+        }
+        payload_data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=payload_data, headers={"Content-Type": "application/json"})
+
+        try:
+            print(f"[Gemini Chat Stream] 尝试模型: {model_name}...")
+            with opener.open(req, timeout=30) as resp:
+                yielded_any = False
+                for line in resp:
+                    line_str = line.decode('utf-8', errors='replace')
+                    if line_str.startswith('data: '):
+                        data_part = line_str[6:].strip()
+                        if not data_part or data_part == '[DONE]':
+                            continue
+                        try:
+                            chunk_json = json.loads(data_part)
+                            candidates = chunk_json.get('candidates', [])
+                            if candidates:
+                                parts = candidates[0].get('content', {}).get('parts', [])
+                                for p in parts:
+                                    t = p.get('text', '')
+                                    if t:
+                                        yielded_any = True
+                                        yield t
+                        except Exception:
+                            pass
+                if yielded_any:
+                    return
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode('utf-8', errors='replace')
+            print(f"[Gemini Chat Stream] {model_name} (HTTP {e.code}): {err_body}")
+            last_error = f"{model_name} ({e.code})"
+            continue
+        except Exception as e:
+            print(f"[Gemini Chat Stream] {model_name} 异常: {e}")
+            last_error = str(e)
+            continue
+
+    raise RuntimeError(f"Gemini 所有模型均调用失败: {last_error}")
+
 def call_gemini_api(prompt: str, model: str = None, progress_callback=None) -> str:
     """Call Google Gemini API with smart multi-model fallback chain against 503 spikes"""
     cfg = load_config()

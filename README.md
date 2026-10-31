@@ -6,11 +6,12 @@
 
 <p align="center">
   <b>一键将 B站 (Bilibili) 与 YouTube 视频提炼为结构化总结与 Markmap 交互式思维导图</b><br>
-  🎙️ 支持无字幕视频本地语音识别 (SenseVoice) · ⚡ 侧边栏无缝伴读 · ⏱️ 点击时间戳原片同步跳转 · 💾 一键保存至 Obsidian
+  🎙️ 支持无字幕视频本地语音识别 (SenseVoice) · ⚡ 侧边栏无缝伴读 · 💬 伴读答疑与划词即问 · ⏱️ 点击时间戳原片同步跳转 · 💾 一键保存至 Obsidian
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/无字幕视频-支持本地ASR转写-success?style=for-the-badge&logo=soundcharts&logoColor=white" alt="No Subtitle Supported">
+  <img src="https://img.shields.io/badge/伴读答疑-划词即问_长上下文溯源-brightgreen?style=for-the-badge" alt="Interactive Q&A">
   <img src="https://img.shields.io/badge/本地离线ASR-SenseVoice_GPU加速-orange?style=for-the-badge" alt="Local ASR">
   <img src="https://img.shields.io/badge/Chrome_Extension-SidePanel_V3-blue?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Chrome Extension">
   <img src="https://img.shields.io/badge/Edge_Extension-Supported-green?style=for-the-badge&logo=microsoftedge&logoColor=white" alt="Edge Extension">
@@ -74,7 +75,16 @@
   - **术语解析**：按需输出，对涉及的专有名词分别给出“学术/行业定义”与“通俗白话解释”；
 - **🧠 脉络思维导图**：时间线与逻辑融合的纯净大纲树。
 
-### 5. 💾 本地保存与 Obsidian 知识库联动
+### 5. 💬 伴读答疑与划词即问 (长上下文溯源)
+- **划词即问（选中文本免翻页追问）**：在阅读「完整总结」时，划选任意词句，自动弹出悬浮操作条：
+  - 💡 **通俗解释**：用大白话和生活比喻解释晦涩难懂的概念；
+  - 🔍 **展开论据**：调取原视频中作者支撑此观点的实际数据、案例与论证细节；
+  - 💬 **追问**：将选中内容一键带入对话框引用条，免去手动复制粘贴；
+- **思维导图分支一键提问**：点击思维导图任意节点旁的 `💬` 图标，自动切换至答疑 Tab 并生成针对该分支的深度剖析；
+- **全量长上下文保障**：提问时将视频元数据、完整结构化总结大纲与全量带时间戳字幕一并作为上下文交付 AI，拒绝断章取义；
+- **回答时间戳全链路联动**：AI 在回答中引用的原片时间戳（如 `⏱️ 03:25`）同样支持点击跳转，帮助快速求证原片论述。
+
+### 6. 💾 本地保存与 Obsidian 知识库联动
 - 默认不强制保存，用户可在浏览满意后点击「保存这篇到本地」；
 - 设置中支持弹出 Windows 原生文件夹选择器，方便指定个人 Obsidian 笔记库目录；
 - 保存后可直接通过 `obsidian://open` 链接快速在笔记软件中打开。
@@ -190,9 +200,12 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 3. 点击 **「一键生成总结与思维导图」**：
    - 有字幕视频：10~15 秒直接出图；
    - 无字幕视频：后台自动并发提取音频并调用本地 SenseVoice 转写后生成总结；
-4. **交互浏览**：
-   - 点击导图或正文中的任意时间戳（如 `⏱️ 04:12`），视频自动同步跳转播放；
-   - 点击底部「💾 保存这篇到本地」，将结果保存为 Markdown 文件并支持通过 Obsidian 打开。
+4. **交互浏览与提问**：
+   - **原片跳转**：点击导图、正文或问答中的任意时间戳（如 `⏱️ 04:12`），视频自动同步跳转播放；
+   - **划词提问**：在「完整总结」中划选任意文字，点击悬浮条即可一键通俗解释、调取论据或快捷追问；
+   - **导图速问**：点击思维导图分支上的 `💬` 图标，针对特定分支向 AI 提问；
+   - **伴读答疑**：切换到「💬 伴读答疑」Tab，输入任意疑问，基于全片全字幕上下文获取解答；
+   - **本地保存**：点击底部「💾 保存这篇到本地」，将结果保存为 Markdown 文件并支持通过 Obsidian 打开。
 
 ---
 
