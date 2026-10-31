@@ -68,11 +68,29 @@ def is_valid_dialogue_subtitles(subtitles: list[dict], video_duration: float = 0
 
     return True
 
+def normalize_video_url(raw_url: str) -> str:
+    """Strip all tracking and query params, guarantee canonical pure video URL"""
+    if not raw_url:
+        return ""
+    match = re.search(r'(BV[a-zA-Z0-9]{10})', raw_url, re.IGNORECASE)
+    if match:
+        return f"https://www.bilibili.com/video/{match.group(1)}"
+    yt_match = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', raw_url)
+    if yt_match:
+        return f"https://www.youtube.com/watch?v={yt_match.group(1)}"
+    return raw_url.split('?')[0].split('#')[0]
+
+def extract_bvid(url: str) -> str:
+    """Extract canonical 12-char BVID from any URL or string"""
+    if not url:
+        return ""
+    match = re.search(r'(BV[a-zA-Z0-9]{10})', url, re.IGNORECASE)
+    return match.group(1) if match else ""
+
 def get_video_expected_duration(url: str) -> float:
     """Fast probe of video duration in seconds (<=0.2s) without downloading media"""
-    match = re.search(r'(BV[a-zA-Z0-9]+)', url, re.IGNORECASE)
-    if match:
-        bvid = match.group(1)
+    bvid = extract_bvid(url)
+    if bvid:
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -105,11 +123,10 @@ def is_subtitles_duration_consistent(subtitles: list[dict], expected_duration: f
     return True, "ok"
 
 def get_bilibili_subtitles(url: str, progress_callback=None) -> tuple[list[dict], dict] | None:
-    """Fast channel: Attempt to extract subtitles from Bilibili via web API"""
-    match = re.search(r'(BV[a-zA-Z0-9]+)', url, re.IGNORECASE)
-    if not match:
+    """Fast channel: Attempt to extract subtitles from Bilibili via web API using canonical BVID"""
+    bvid = extract_bvid(url)
+    if not bvid:
         return None
-    bvid = match.group(1)
 
     if progress_callback:
         progress_callback("正在快速探查 B 站官方/AI 字幕...")
@@ -322,10 +339,11 @@ def get_subtitles_via_ytdlp(url: str, progress_callback=None) -> tuple[list[dict
 
 def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) -> tuple[list[dict], dict]:
     """Slow channel fallback: Download pure audio and run local SenseVoice ASR.
-    Uses UUID-isolated filenames to strictly prevent any cross-video audio pollution.
+    Uses canonical URL and UUID-isolated filenames to strictly prevent any cross-video audio pollution.
     """
+    clean_url = normalize_video_url(url)
     cfg = load_config()
-    proxy = cfg.get("proxy_url") if "youtube.com" in url or "youtu.be" in url else None
+    proxy = cfg.get("proxy_url") if "youtube.com" in clean_url or "youtu.be" in clean_url else None
     ffmpeg_bin = cfg.get("ffmpeg_bin", "").strip() or "ffmpeg"
 
     temp_dir = tempfile.gettempdir()
@@ -372,7 +390,7 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
     audio_file = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            res = ydl.extract_info(url, download=True)
+            res = ydl.extract_info(clean_url, download=True)
             if not meta.get("title") and res:
                 meta["title"] = res.get('title', '视频总结')
                 meta["author"] = res.get('uploader', '未知UP主')
@@ -408,12 +426,13 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
                     pass
 
 def extract_subtitles_pipeline(url: str, progress_callback=None) -> tuple[list[dict], dict]:
-    """Dual-channel entry point: Fast first, then slow fallback"""
-    meta = {"title": "未知视频", "author": "未知UP主", "url": url}
+    """Dual-channel entry point: Fast first, then slow fallback, strictly anchored to canonical video ID"""
+    clean_url = normalize_video_url(url)
+    meta = {"title": "未知视频", "author": "未知UP主", "url": clean_url}
 
-    # 1. Try Bilibili Fast Channel
-    if "bilibili.com" in url or "b23.tv" in url:
-        res = get_bilibili_subtitles(url, progress_callback)
+    # 1. Try Bilibili Fast Channel (Official API querying canonical BVID)
+    if "bilibili.com" in clean_url or "b23.tv" in clean_url:
+        res = get_bilibili_subtitles(clean_url, progress_callback)
         if res:
             subtitles, m = res
             if m:
@@ -422,7 +441,7 @@ def extract_subtitles_pipeline(url: str, progress_callback=None) -> tuple[list[d
                 return subtitles, meta
 
     # 2. Try YouTube / General yt-dlp Fast Channel
-    res = get_subtitles_via_ytdlp(url, progress_callback)
+    res = get_subtitles_via_ytdlp(clean_url, progress_callback)
     if res:
         subtitles, m = res
         if m:
@@ -436,4 +455,4 @@ def extract_subtitles_pipeline(url: str, progress_callback=None) -> tuple[list[d
     if not bin_path or not os.path.exists(bin_path):
         raise RuntimeError("检测到该视频未提供在线字幕，或在线字幕主要为纯音乐/占位标签导致有效口播缺失。需通过本地 SenseVoice 进行语音识别，请在设置中配置 SenseVoice 路径以开启离线转写，或总结其他带有效字幕的视频。")
 
-    return download_audio_and_transcribe(url, meta, progress_callback)
+    return download_audio_and_transcribe(clean_url, meta, progress_callback)

@@ -97,11 +97,29 @@ function isValidDialogueSubtitles(subtitles, videoDuration = 0) {
   return true;
 }
 
-// --- Direct In-Browser Bilibili Subtitle Extractor ---
-async function tryExtractBilibiliSubtitlesInBrowser() {
-  const bvidMatch = window.location.pathname.match(/BV[a-zA-Z0-9]+/i);
-  if (!bvidMatch) return null;
-  const bvid = bvidMatch[0];
+function extractCleanBvid(urlOrPath) {
+  if (!urlOrPath) return "";
+  const match = urlOrPath.match(/(BV[a-zA-Z0-9]{10})/i);
+  return match ? match[1] : "";
+}
+
+// --- Direct In-Browser Bilibili Subtitle Extractor with BV-ID Verification ---
+async function tryExtractBilibiliSubtitlesInBrowser(expectedBvid = "") {
+  const currentBvid = extractCleanBvid(window.location.pathname) || extractCleanBvid(window.location.href);
+  if (!currentBvid) return { rejected: true, reason: "no_bvid_found" };
+
+  // Handshake Quality Guard: Strict BV-ID match prevents any stale SPA cross-video contamination
+  if (expectedBvid && expectedBvid.toLowerCase() !== currentBvid.toLowerCase()) {
+    console.warn(`[ContentScript] Stale SPA detected! Page bvid (${currentBvid}) !== expected bvid (${expectedBvid}). Rejecting.`);
+    return {
+      rejected: true,
+      reason: "bvid_mismatch",
+      currentBvid: currentBvid,
+      expectedBvid: expectedBvid
+    };
+  }
+
+  const bvid = currentBvid;
 
   try {
     // 1. Get cid using in-browser fetch with user's login cookies
@@ -124,7 +142,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
     const playerData = await playerRes.json();
     const subList = playerData?.data?.subtitle?.subtitles || [];
 
-    if (subList.length === 0) return null;
+    if (subList.length === 0) return { subtitles: [], bvid: bvid, empty: true };
 
     // Prefer Chinese subtitle (zh-CN or ai-zh)
     let bestSub = subList[0];
@@ -136,7 +154,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
     }
 
     let subUrl = bestSub.subtitle_url;
-    if (!subUrl) return null;
+    if (!subUrl) return { subtitles: [], bvid: bvid, empty: true };
     if (subUrl.startsWith('//')) subUrl = 'https:' + subUrl;
 
     // 3. Fetch subtitle JSON
@@ -144,7 +162,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
     const subJson = await subJsonRes.json();
     const body = subJson.body || [];
 
-    if (body.length === 0) return null;
+    if (body.length === 0) return { subtitles: [], bvid: bvid, empty: true };
 
     const subtitles = body.map(item => ({
       from: Math.round(parseFloat(item.from) * 100) / 100,
@@ -166,6 +184,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
           subtitles: [],
           rejected: true,
           reason: "duration_mismatch",
+          bvid: bvid,
           videoDuration: videoDuration,
           maxTimestamp: maxTimestamp,
           title: title,
@@ -179,6 +198,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
           subtitles: [],
           rejected: true,
           reason: "duration_incomplete",
+          bvid: bvid,
           videoDuration: videoDuration,
           maxTimestamp: maxTimestamp,
           title: title,
@@ -194,6 +214,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
         subtitles: [],
         rejected: true,
         reason: "insufficient_dialogue_density",
+        bvid: bvid,
         title: title,
         author: author
       };
@@ -201,6 +222,7 @@ async function tryExtractBilibiliSubtitlesInBrowser() {
 
     return {
       subtitles: subtitles,
+      bvid: bvid,
       title: title,
       author: author,
       videoDuration: videoDuration,
@@ -265,11 +287,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "EXTRACT_SUBTITLES_DIRECT") {
     if (window.location.hostname.includes("bilibili.com")) {
-      tryExtractBilibiliSubtitlesInBrowser().then(result => {
-        if (result && result.subtitles && result.subtitles.length > 0) {
+      const expectedBvid = request.expected_bvid || "";
+      tryExtractBilibiliSubtitlesInBrowser(expectedBvid).then(result => {
+        if (result && result.rejected) {
+          sendResponse({ status: "rejected", data: result });
+        } else if (result && result.subtitles && result.subtitles.length > 0) {
           sendResponse({ status: "success", data: result });
         } else {
-          sendResponse({ status: "empty" });
+          sendResponse({ status: "empty", bvid: extractCleanBvid(window.location.href) });
         }
       }).catch(e => {
         sendResponse({ status: "error", error: e.toString() });

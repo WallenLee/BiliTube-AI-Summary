@@ -16,7 +16,9 @@ from dual_sub_engine import (
     extract_subtitles_pipeline,
     is_valid_dialogue_subtitles,
     get_video_expected_duration,
-    is_subtitles_duration_consistent
+    is_subtitles_duration_consistent,
+    normalize_video_url,
+    extract_bvid
 )
 from ai_gemini import generate_video_summary, build_chat_prompt, stream_gemini_chat
 from exporter import export_summary_to_file, open_file_locally
@@ -93,6 +95,8 @@ task_queues: Dict[str, asyncio.Queue] = {}
 class SummarizeRequest(BaseModel):
     url: str
     title: Optional[str] = ""
+    bvid: Optional[str] = ""
+    sub_bvid: Optional[str] = ""
     pre_extracted_subtitles: Optional[list] = None
     sub_source: Optional[str] = ""
 
@@ -130,7 +134,15 @@ async def notify_task(task_id: str, data: dict):
     if task_id in task_queues:
         await task_queues[task_id].put(data)
 
-def run_summarize_workflow(task_id: str, url: str, user_title: str, pre_subtitles: list = None, sub_source: str = ""):
+def run_summarize_workflow(
+    task_id: str,
+    url: str,
+    user_title: str,
+    bvid: str = "",
+    sub_bvid: str = "",
+    pre_subtitles: list = None,
+    sub_source: str = ""
+):
     """Synchronous pipeline executed in background executor"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -142,16 +154,21 @@ def run_summarize_workflow(task_id: str, url: str, user_title: str, pre_subtitle
         }))
 
     try:
-        meta = {"title": user_title or "视频总结", "author": "UP主/作者", "url": url}
+        clean_url = normalize_video_url(url)
+        target_bvid = bvid or extract_bvid(clean_url)
+        meta = {"title": user_title or "视频总结", "author": "UP主/作者", "url": clean_url, "bvid": target_bvid}
         
-        # Rigorous Double-Defense: Validate dialogue density AND duration consistency
+        # Rigorous Double-Defense: BV-ID Hard Binding + Dialogue density + Duration check
         use_pre = False
         if pre_subtitles and len(pre_subtitles) > 0:
-            if not is_valid_dialogue_subtitles(pre_subtitles):
+            if sub_bvid and target_bvid and sub_bvid.lower() != target_bvid.lower():
+                log_system_event(f"⚠️ 预提取字幕 BVID({sub_bvid}) 与目标视频({target_bvid})不符(SPA残留)，果断丢弃！")
+                progress_callback("⚠️ 网页字幕视频号不匹配(检测到前序视频缓存)，自动转入服务端通道...")
+            elif not is_valid_dialogue_subtitles(pre_subtitles):
                 log_system_event("⚠️ 网页捕获字幕有效对白不足(主要为BGM/音乐/噪音占位符)，丢弃并转入服务端通道")
                 progress_callback("⚠️ 网页捕获的在线字幕主要为纯音乐/占位符，自动转入服务端通道...")
             else:
-                expected_dur = get_video_expected_duration(url)
+                expected_dur = get_video_expected_duration(clean_url)
                 dur_ok, dur_msg = is_subtitles_duration_consistent(pre_subtitles, expected_dur)
                 if not dur_ok:
                     log_system_event(f"⚠️ {dur_msg}，强制丢弃并转入服务端深度转写通道！")
@@ -166,7 +183,7 @@ def run_summarize_workflow(task_id: str, url: str, user_title: str, pre_subtitle
         else:
             if not pre_subtitles:
                 progress_callback("开始解析视频链接与字幕通道...")
-            subtitles, meta = extract_subtitles_pipeline(url, progress_callback=progress_callback)
+            subtitles, meta = extract_subtitles_pipeline(clean_url, progress_callback=progress_callback)
 
         if not subtitles:
             raise RuntimeError("未提取到任何字幕或语音内容")
@@ -221,25 +238,31 @@ def update_config(req: ConfigRequest):
 
 @app.post("/api/summarize")
 async def start_summarize(req: SummarizeRequest, background_tasks: BackgroundTasks):
-    url = req.url.strip()
-    if not url:
+    raw_url = req.url.strip()
+    if not raw_url:
         raise HTTPException(status_code=400, detail="URL 不能为空")
+
+    clean_url = normalize_video_url(raw_url)
+    target_bvid = req.bvid or extract_bvid(clean_url)
 
     task_id = str(uuid.uuid4())
     tasks[task_id] = {
         "task_id": task_id,
-        "url": url,
+        "url": clean_url,
+        "bvid": target_bvid,
         "status": "pending",
         "message": "任务初始化中..."
     }
     task_queues[task_id] = asyncio.Queue()
 
-    # Launch background thread
+    # Launch background thread with normalized clean URL and BV-ID verification
     background_tasks.add_task(
         run_summarize_workflow,
         task_id,
-        url,
+        clean_url,
         req.title or "",
+        target_bvid,
+        req.sub_bvid or "",
         req.pre_extracted_subtitles,
         req.sub_source or ""
     )
