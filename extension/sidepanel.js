@@ -354,18 +354,23 @@ function normalizeVideoUrl(rawUrl) {
   if (biliMatch) {
     return `https://www.bilibili.com/video/${biliMatch[1]}`;
   }
-  const ytMatch = rawUrl.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  const ytMatch = rawUrl.match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([a-zA-Z0-9_-]{11})/);
   if (ytMatch) {
     return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
   }
   return rawUrl.split('?')[0].split('#')[0];
 }
 
-function extractCleanBvid(rawUrl) {
+function extractCanonicalVideoId(rawUrl) {
   if (!rawUrl) return "";
-  const m = rawUrl.match(/(BV[a-zA-Z0-9]{10})/i);
-  return m ? m[1] : "";
+  const biliMatch = rawUrl.match(/(BV[a-zA-Z0-9]{10})/i);
+  if (biliMatch) return biliMatch[1];
+  const ytMatch = rawUrl.match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+  if (ytMatch) return ytMatch[1];
+  return "";
 }
+
+const extractCleanBvid = extractCanonicalVideoId;
 
 // --- 2. Active Tab Detection ---
 async function detectCurrentVideoTab() {
@@ -376,7 +381,7 @@ async function detectCurrentVideoTab() {
 
     const cleanUrl = normalizeVideoUrl(tab.url);
     currentActiveTab.cleanUrl = cleanUrl;
-    currentActiveTab.bvid = extractCleanBvid(cleanUrl);
+    currentActiveTab.bvid = extractCanonicalVideoId(cleanUrl);
 
     let displayTitle = (tab.title || "未知标题")
       .replace(/_哔哩哔哩_bilibili$/i, '')
@@ -405,11 +410,14 @@ async function detectCurrentVideoTab() {
       chrome.tabs.sendMessage(tab.id, { action: "GET_VIDEO_INFO" }, (resp) => {
         if (!chrome.runtime.lastError && resp && resp.title) {
           videoTitleEl.textContent = resp.title;
+          if (resp.author) {
+            currentActiveTab.author = resp.author;
+          }
           if (resp.url) {
             const freshCleanUrl = normalizeVideoUrl(resp.url);
             videoUrlEl.textContent = freshCleanUrl;
             currentActiveTab.cleanUrl = freshCleanUrl;
-            currentActiveTab.bvid = extractCleanBvid(freshCleanUrl);
+            currentActiveTab.bvid = extractCanonicalVideoId(freshCleanUrl);
           }
           currentActiveTab.title = resp.title;
         }
@@ -425,8 +433,8 @@ async function detectCurrentVideoTab() {
 
 function checkStaleSummaryMismatch() {
   if (!currentSummaryData || !currentActiveTab || !currentActiveTab.url) return;
-  const currentBvid = extractCleanBvid(currentActiveTab.url);
-  const summaryBvid = extractCleanBvid(currentSummaryData.url || "");
+  const currentBvid = extractCanonicalVideoId(currentActiveTab.url);
+  const summaryBvid = extractCanonicalVideoId(currentSummaryData.url || "");
 
   // If BV-ID clearly belongs to another video
   if (summaryBvid && currentBvid && summaryBvid.toLowerCase() !== currentBvid.toLowerCase()) {
@@ -789,17 +797,19 @@ async function startSummarize() {
 
   let preExtractedSubtitles = null;
   let preTitle = currentActiveTab.title || "";
+  let preAuthor = currentActiveTab.author || "";
   let subSource = "";
 
   const cleanUrl = normalizeVideoUrl(currentActiveTab.url);
-  const targetBvid = extractCleanBvid(cleanUrl);
+  const targetVideoId = extractCanonicalVideoId(cleanUrl);
 
-  // 1. Try direct in-browser extraction first with BV-ID Handshake Verification (0.2s)
+  // 1. Try direct in-browser extraction first with Video-ID Handshake Verification (0.2s)
   try {
-    const tabRes = await new Promise((resolve) => {
+    let tabRes = await new Promise((resolve) => {
       chrome.tabs.sendMessage(currentActiveTab.id, {
         action: "EXTRACT_SUBTITLES_DIRECT",
-        expected_bvid: targetBvid
+        expected_id: targetVideoId,
+        expected_bvid: targetVideoId
       }, (resp) => {
         if (chrome.runtime.lastError || !resp) {
           resolve(null);
@@ -810,14 +820,45 @@ async function startSummarize() {
       setTimeout(() => resolve(null), 1500);
     });
 
-    if (tabRes && tabRes.data && tabRes.data.title) {
-      preTitle = tabRes.data.title;
-      videoTitleEl.textContent = preTitle;
+    // If content script was not yet loaded into an existing tab, inject it on-demand and retry
+    if (!tabRes) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: currentActiveTab.id },
+          files: ["content_script.js"]
+        });
+        tabRes = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(currentActiveTab.id, {
+            action: "EXTRACT_SUBTITLES_DIRECT",
+            expected_id: targetVideoId,
+            expected_bvid: targetVideoId
+          }, (resp) => {
+            if (chrome.runtime.lastError || !resp) {
+              resolve(null);
+            } else {
+              resolve(resp);
+            }
+          });
+          setTimeout(() => resolve(null), 1200);
+        });
+      } catch (injectErr) {
+        console.warn("Content script on-demand injection fallback:", injectErr);
+      }
+    }
+
+    if (tabRes && tabRes.data) {
+      if (tabRes.data.title) {
+        preTitle = tabRes.data.title;
+        videoTitleEl.textContent = preTitle;
+      }
+      if (tabRes.data.author) {
+        preAuthor = tabRes.data.author;
+      }
     }
 
     if (tabRes && tabRes.data && tabRes.data.rejected) {
-      if (tabRes.data.reason === "bvid_mismatch") {
-        console.warn(`[SidePanel] BVID Mismatch! Target: ${targetBvid}, tab has: ${tabRes.data.currentBvid}. Discarding stale SPA subtitles.`);
+      if (tabRes.data.reason === "bvid_mismatch" || tabRes.data.reason === "ytid_mismatch") {
+        console.warn(`[SidePanel] Video ID Mismatch! Target: ${targetVideoId}, tab has: ${tabRes.data.currentBvid || tabRes.data.currentYtId}. Discarding stale SPA subtitles.`);
         progressText.textContent = "⚡ 检测到视频页面切换中(视频号防伪不匹配)，自动转入服务端通道...";
       } else if (tabRes.data.reason === "duration_mismatch" || tabRes.data.reason === "duration_incomplete") {
         progressText.textContent = "⚡ 检测到在线字幕时长与当前视频不匹配，自动切换至服务端通道...";
@@ -826,9 +867,10 @@ async function startSummarize() {
       }
       preExtractedSubtitles = null;
     } else if (tabRes && tabRes.status === "success" && tabRes.data && tabRes.data.subtitles && tabRes.data.subtitles.length > 0) {
-      // Defense 1: BV-ID Hard Binding verification
-      if (targetBvid && tabRes.data.bvid && tabRes.data.bvid.toLowerCase() !== targetBvid.toLowerCase()) {
-        console.warn(`[SidePanel] Discarding stale subtitles: expected BVID ${targetBvid} != data BVID ${tabRes.data.bvid}`);
+      // Defense 1: Video ID Hard Binding verification
+      const returnedId = tabRes.data.bvid || tabRes.data.ytid;
+      if (targetVideoId && returnedId && returnedId.toLowerCase() !== targetVideoId.toLowerCase()) {
+        console.warn(`[SidePanel] Discarding stale subtitles: expected ID ${targetVideoId} != data ID ${returnedId}`);
         preExtractedSubtitles = null;
         progressText.textContent = "⚡ 网页字幕视频号与当前视频不匹配，自动转入服务端通道重新转写...";
       } else {
@@ -849,6 +891,9 @@ async function startSummarize() {
             preTitle = tabRes.data.title;
             videoTitleEl.textContent = preTitle;
           }
+          if (tabRes.data.author) {
+            preAuthor = tabRes.data.author;
+          }
           subSource = tabRes.data.sub_source || "browser_direct";
           progressText.textContent = `⚡ 网页官方字幕捕获成功 (共 ${preExtractedSubtitles.length} 句)，跳过下载直接总结...`;
         }
@@ -861,13 +906,14 @@ async function startSummarize() {
   try {
     const payload = {
       url: cleanUrl,
-      bvid: targetBvid,
-      title: preTitle
+      bvid: targetVideoId,
+      title: preTitle,
+      author: preAuthor
     };
     if (preExtractedSubtitles && preExtractedSubtitles.length > 0) {
       payload.pre_extracted_subtitles = preExtractedSubtitles;
       payload.sub_source = subSource;
-      payload.sub_bvid = tabRes?.data?.bvid || targetBvid;
+      payload.sub_bvid = tabRes?.data?.bvid || tabRes?.data?.ytid || targetVideoId;
     }
 
     const res = await fetch(`${API_BASE}/api/summarize`, {

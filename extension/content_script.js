@@ -248,6 +248,7 @@ function getPageVideoTitle() {
 
   // 2. Try YouTube specific title elements
   const ytH1 = document.querySelector('ytd-watch-metadata #title h1 yt-formatted-string')
+    || document.querySelector('ytd-watch-metadata #title h1')
     || document.querySelector('h1.ytd-video-primary-info-renderer')
     || document.querySelector('#title h1');
   if (ytH1 && ytH1.textContent.trim()) {
@@ -258,6 +259,319 @@ function getPageVideoTitle() {
   let title = (document.title || "").trim();
   title = title.replace(/_哔哩哔哩_bilibili$/i, '').replace(/ - YouTube$/i, '').trim();
   return title || "未知视频";
+}
+
+// Extract real-time author / channel name from page DOM
+function getPageVideoAuthor() {
+  if (window.location.hostname.includes("bilibili.com")) {
+    const authorEl = document.querySelector('.up-name') 
+      || document.querySelector('.username')
+      || document.querySelector('.up-info__name');
+    return authorEl ? authorEl.textContent.trim() : "UP主";
+  }
+  if (window.location.hostname.includes("youtube.com") || window.location.hostname.includes("youtu.be")) {
+    const chEl = document.querySelector('ytd-watch-metadata #channel-name a')
+      || document.querySelector('ytd-watch-metadata ytd-channel-name a')
+      || document.querySelector('#owner #channel-name a')
+      || document.querySelector('#upload-info #channel-name a')
+      || document.querySelector('ytd-channel-name a');
+    return chEl ? chEl.textContent.trim() : "YouTube频道";
+  }
+  return "作者";
+}
+
+function extractCleanYtId(urlOrPath) {
+  if (!urlOrPath) return "";
+  const match = urlOrPath.match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : "";
+}
+
+// Query YouTube's MAIN execution world via bridge to obtain live player response & captionTracks
+function getYouTubePlayerResponseViaBridge() {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', handler);
+      resolve(null);
+    }, 450);
+
+    const handler = (event) => {
+      if (event.source === window && event.data && event.data.type === '__BILITUBE_YT_DATA__') {
+        clearTimeout(timeout);
+        window.removeEventListener('message', handler);
+        resolve(event.data.payload);
+      }
+    };
+    window.addEventListener('message', handler);
+
+    try {
+      const script = document.createElement('script');
+      script.textContent = `
+        (function() {
+          try {
+            let pr = null;
+            const mp = document.getElementById('movie_player');
+            if (mp && typeof mp.getPlayerResponse === 'function') {
+              pr = mp.getPlayerResponse();
+            }
+            if (!pr && window.ytInitialPlayerResponse) {
+              pr = window.ytInitialPlayerResponse;
+            }
+            if (!pr) {
+              const flexy = document.querySelector('ytd-watch-flexy');
+              if (flexy && flexy.playerData) pr = flexy.playerData;
+            }
+            window.postMessage({
+              type: '__BILITUBE_YT_DATA__',
+              payload: pr ? {
+                videoId: pr.videoDetails?.videoId,
+                title: pr.videoDetails?.title,
+                author: pr.videoDetails?.author,
+                lengthSeconds: pr.videoDetails?.lengthSeconds,
+                captionTracks: pr.captions?.playerCaptionsTracklistRenderer?.captionTracks || []
+              } : null
+            }, '*');
+          } catch(e) {
+            window.postMessage({ type: '__BILITUBE_YT_DATA__', payload: null }, '*');
+          }
+        })();
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    } catch (e) {
+      clearTimeout(timeout);
+      window.removeEventListener('message', handler);
+      resolve(null);
+    }
+  });
+}
+
+function getYouTubeCaptionTracksFromDom() {
+  const scripts = document.querySelectorAll('script');
+  for (const s of scripts) {
+    const txt = s.textContent || "";
+    if (txt.includes('captionTracks')) {
+      const idx = txt.indexOf('"captionTracks":');
+      if (idx !== -1) {
+        const start = idx + '"captionTracks":'.length;
+        const end = txt.indexOf(']', start) + 1;
+        try {
+          const tracks = JSON.parse(txt.substring(start, end));
+          if (Array.isArray(tracks) && tracks.length > 0) {
+            return tracks;
+          }
+        } catch (e) {}
+      }
+    }
+  }
+  return null;
+}
+
+// --- Direct In-Browser YouTube Subtitle Extractor with Video-ID Verification ---
+async function tryExtractYouTubeSubtitlesInBrowser(expectedYtId = "") {
+  const currentYtId = extractCleanYtId(window.location.search) 
+    || extractCleanYtId(window.location.pathname) 
+    || extractCleanYtId(window.location.href);
+  if (!currentYtId) return { rejected: true, reason: "no_ytid_found" };
+
+  // Handshake Quality Guard: Strict YouTube ID match prevents stale SPA cross-video contamination
+  if (expectedYtId && expectedYtId !== currentYtId) {
+    console.warn(`[ContentScript] Stale SPA detected! Page ytid (${currentYtId}) !== expected ytid (${expectedYtId}). Rejecting.`);
+    return {
+      rejected: true,
+      reason: "ytid_mismatch",
+      currentYtId: currentYtId,
+      expectedYtId: expectedYtId
+    };
+  }
+
+  const title = getPageVideoTitle();
+  const author = getPageVideoAuthor();
+  const video = findActiveVideo();
+  const videoDuration = video ? (parseFloat(video.duration) || 0) : 0;
+
+  try {
+    let captionTracks = null;
+    let videoDetails = null;
+
+    // 1. Try bridge to live player in MAIN world
+    const bridgeData = await getYouTubePlayerResponseViaBridge();
+    if (bridgeData && (!bridgeData.videoId || bridgeData.videoId === currentYtId)) {
+      captionTracks = bridgeData.captionTracks;
+      videoDetails = bridgeData;
+    }
+
+    // 2. Fallback to DOM script scan
+    if (!captionTracks || captionTracks.length === 0) {
+      captionTracks = getYouTubeCaptionTracksFromDom();
+    }
+
+    if (!captionTracks || captionTracks.length === 0) {
+      return {
+        subtitles: [],
+        bvid: currentYtId,
+        ytid: currentYtId,
+        title: title,
+        author: author,
+        empty: true
+      };
+    }
+
+    // 3. Select best subtitle track (Chinese first, then English, then translatable)
+    let bestTrack = null;
+    let isTranslated = false;
+
+    // a. Human-uploaded Chinese
+    bestTrack = captionTracks.find(t => (t.languageCode || '').toLowerCase().startsWith('zh') && t.kind !== 'asr');
+
+    // b. Auto-generated Chinese
+    if (!bestTrack) {
+      bestTrack = captionTracks.find(t => (t.languageCode || '').toLowerCase().startsWith('zh'));
+    }
+
+    // c. Human-uploaded English
+    if (!bestTrack) {
+      bestTrack = captionTracks.find(t => (t.languageCode || '').toLowerCase().startsWith('en') && t.kind !== 'asr');
+    }
+
+    // d. Auto-generated English
+    if (!bestTrack) {
+      bestTrack = captionTracks.find(t => (t.languageCode || '').toLowerCase().startsWith('en'));
+    }
+
+    // e. If translatable to Chinese
+    let targetSubUrl = "";
+    if (bestTrack) {
+      targetSubUrl = bestTrack.baseUrl;
+    } else {
+      const translatable = captionTracks.find(t => t.isTranslatable || t.baseUrl);
+      if (translatable) {
+        bestTrack = translatable;
+        targetSubUrl = translatable.baseUrl + '&tlang=zh-Hans';
+        isTranslated = true;
+      } else {
+        bestTrack = captionTracks[0];
+        targetSubUrl = bestTrack.baseUrl;
+      }
+    }
+
+    if (!targetSubUrl) {
+      return { subtitles: [], bvid: currentYtId, ytid: currentYtId, title: title, author: author, empty: true };
+    }
+
+    // Request fmt=json3 for robust, millisecond-accurate timestamps
+    if (!targetSubUrl.includes('fmt=')) {
+      targetSubUrl += '&fmt=json3';
+    }
+
+    // 4. In-browser authenticated fetch (immune to 429 and anti-bot blocks)
+    const subRes = await fetch(targetSubUrl, { credentials: "include" });
+    const rawText = await subRes.text();
+
+    let subtitles = [];
+    if (rawText && rawText.trim().startsWith('{')) {
+      try {
+        const json = JSON.parse(rawText);
+        if (Array.isArray(json.events)) {
+          for (const ev of json.events) {
+            if (!ev.segs) continue;
+            const tStart = Math.round((ev.tStartMs || 0) / 10) / 100;
+            const dDur = Math.round((ev.dDurationMs || 0) / 10) / 100;
+            const txt = ev.segs.map(s => s.utf8 || '').join('').trim();
+            if (txt && txt !== '\n') {
+              subtitles.push({
+                from: tStart,
+                to: Math.round((tStart + dDur) * 100) / 100,
+                content: txt
+              });
+            }
+          }
+        }
+      } catch (je) {
+        console.warn("[ContentScript] JSON3 parse error, checking XML:", je);
+      }
+    }
+
+    // Fallback XML parser
+    if (subtitles.length === 0 && rawText && (rawText.includes('<transcript') || rawText.includes('<text'))) {
+      try {
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(rawText, "text/xml");
+        const nodes = xml.querySelectorAll("text");
+        for (const node of nodes) {
+          const start = parseFloat(node.getAttribute("start") || 0);
+          const dur = parseFloat(node.getAttribute("dur") || 0);
+          const text = (node.textContent || "").trim();
+          if (text) {
+            subtitles.push({
+              from: Math.round(start * 100) / 100,
+              to: Math.round((start + dur) * 100) / 100,
+              content: text
+            });
+          }
+        }
+      } catch (xe) {
+        console.warn("[ContentScript] XML parse error:", xe);
+      }
+    }
+
+    if (subtitles.length === 0) {
+      return { subtitles: [], bvid: currentYtId, ytid: currentYtId, title: title, author: author, empty: true };
+    }
+
+    // Quality check: Duration & Dialogue density
+    let maxTimestamp = 0;
+    for (const item of subtitles) {
+      if (item.to > maxTimestamp) maxTimestamp = item.to;
+    }
+
+    if (videoDuration > 0) {
+      if (maxTimestamp > (videoDuration * 1.25 + 10)) {
+        console.warn(`[ContentScript] Stale subtitles detected! Max timestamp ${maxTimestamp}s > video duration ${videoDuration}s.`);
+        return {
+          subtitles: [],
+          rejected: true,
+          reason: "duration_mismatch",
+          bvid: currentYtId,
+          ytid: currentYtId,
+          videoDuration: videoDuration,
+          maxTimestamp: maxTimestamp,
+          title: title,
+          author: author
+        };
+      }
+    }
+
+    if (!isValidDialogueSubtitles(subtitles, videoDuration)) {
+      console.warn("[ContentScript] Subtitles rejected: failed dialogue density check (mostly noise/music).");
+      return {
+        subtitles: [],
+        rejected: true,
+        reason: "insufficient_dialogue_density",
+        bvid: currentYtId,
+        ytid: currentYtId,
+        title: title,
+        author: author
+      };
+    }
+
+    const langLabel = bestTrack.languageCode || (isTranslated ? 'zh-Hans_translated' : 'auto');
+    const finalTitle = (videoDetails && videoDetails.title) ? videoDetails.title : title;
+    const finalAuthor = (videoDetails && videoDetails.author) ? videoDetails.author : author;
+
+    return {
+      subtitles: subtitles,
+      bvid: currentYtId, // Unified ID field
+      ytid: currentYtId,
+      title: finalTitle,
+      author: finalAuthor,
+      videoDuration: videoDuration,
+      sub_source: `youtube_browser_${langLabel}`
+    };
+
+  } catch (err) {
+    console.warn("[ContentScript] In-browser YouTube sub extraction error:", err);
+    return null;
+  }
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -279,6 +593,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const video = findActiveVideo();
     sendResponse({
       title: getPageVideoTitle(),
+      author: getPageVideoAuthor(),
       url: window.location.href,
       currentTime: video ? video.currentTime : 0
     });
@@ -287,14 +602,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "EXTRACT_SUBTITLES_DIRECT") {
     if (window.location.hostname.includes("bilibili.com")) {
-      const expectedBvid = request.expected_bvid || "";
-      tryExtractBilibiliSubtitlesInBrowser(expectedBvid).then(result => {
+      const expectedId = request.expected_id || request.expected_bvid || "";
+      tryExtractBilibiliSubtitlesInBrowser(expectedId).then(result => {
         if (result && result.rejected) {
           sendResponse({ status: "rejected", data: result });
         } else if (result && result.subtitles && result.subtitles.length > 0) {
           sendResponse({ status: "success", data: result });
         } else {
           sendResponse({ status: "empty", bvid: extractCleanBvid(window.location.href) });
+        }
+      }).catch(e => {
+        sendResponse({ status: "error", error: e.toString() });
+      });
+      return true; // async sendResponse
+    } else if (window.location.hostname.includes("youtube.com") || window.location.hostname.includes("youtu.be")) {
+      const expectedId = request.expected_id || request.expected_bvid || "";
+      tryExtractYouTubeSubtitlesInBrowser(expectedId).then(result => {
+        if (result && result.rejected) {
+          sendResponse({ status: "rejected", data: result });
+        } else if (result && result.subtitles && result.subtitles.length > 0) {
+          sendResponse({ status: "success", data: result });
+        } else {
+          sendResponse({ status: "empty", ytid: extractCleanYtId(window.location.href) });
         }
       }).catch(e => {
         sendResponse({ status: "error", error: e.toString() });

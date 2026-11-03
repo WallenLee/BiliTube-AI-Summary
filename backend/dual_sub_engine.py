@@ -81,16 +81,21 @@ def normalize_video_url(raw_url: str) -> str:
     return raw_url.split('?')[0].split('#')[0]
 
 def extract_bvid(url: str) -> str:
-    """Extract canonical 12-char BVID from any URL or string"""
+    """Extract canonical video ID from any URL (BVID for Bilibili, 11-char ID for YouTube)"""
     if not url:
         return ""
     match = re.search(r'(BV[a-zA-Z0-9]{10})', url, re.IGNORECASE)
-    return match.group(1) if match else ""
+    if match:
+        return match.group(1)
+    yt_match = re.search(r'(?:v=|youtu\.be/|embed/|v/|shorts/)([a-zA-Z0-9_-]{11})', url)
+    if yt_match:
+        return yt_match.group(1)
+    return ""
 
 def get_video_expected_duration(url: str) -> float:
     """Fast probe of video duration in seconds (<=0.2s) without downloading media"""
     bvid = extract_bvid(url)
-    if bvid:
+    if bvid and bvid.upper().startswith("BV"):
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -357,8 +362,8 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
         progress_callback("未检测到有效字幕，正在快速抓取轻量音频 (yt-dlp)...")
 
     ydl_opts = {
-        # 1. 优先抓取低码率纯人声音频（32k~64k 对 ASR 而言绰绰有余，体积比高音质缩小 75%）
-        'format': 'ba[abr<=64]/worstaudio/ba/b',
+        # 1. 优先抓取原声人声音频（防止 YouTube 多音轨视频下载到错误的外语配音/小语种音轨）
+        'format': 'ba[format_note*=original]/ba[format_note*=default]/ba[language^=en]/ba[language^=zh]/ba[abr<=96]/worstaudio/ba/b',
         'outtmpl': output_template,
         # 2. 严格禁用合集/剧集连带下载，确保 100% 仅下载目标单体视频
         'noplaylist': True,
@@ -391,9 +396,11 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             res = ydl.extract_info(clean_url, download=True)
-            if not meta.get("title") and res:
-                meta["title"] = res.get('title', '视频总结')
-                meta["author"] = res.get('uploader', '未知UP主')
+            if res:
+                if (not meta.get("title") or meta.get("title") in ("未知视频", "视频总结")) and res.get('title'):
+                    meta["title"] = res.get('title')
+                if (not meta.get("author") or meta.get("author") in ("未知UP主", "未知作者")) and (res.get('uploader') or res.get('channel')):
+                    meta["author"] = res.get('uploader') or res.get('channel')
             
             # Find the generated wav file strictly matching this task's unique prefix
             if os.path.exists(expected_wav):

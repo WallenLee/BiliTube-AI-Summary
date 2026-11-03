@@ -95,6 +95,7 @@ task_queues: Dict[str, asyncio.Queue] = {}
 class SummarizeRequest(BaseModel):
     url: str
     title: Optional[str] = ""
+    author: Optional[str] = ""
     bvid: Optional[str] = ""
     sub_bvid: Optional[str] = ""
     pre_extracted_subtitles: Optional[list] = None
@@ -142,7 +143,8 @@ def run_summarize_workflow(
     bvid: str = "",
     sub_bvid: str = "",
     pre_subtitles: list = None,
-    sub_source: str = ""
+    sub_source: str = "",
+    user_author: str = ""
 ):
     """Synchronous pipeline executed in background executor"""
     loop = asyncio.new_event_loop()
@@ -157,7 +159,12 @@ def run_summarize_workflow(
     try:
         clean_url = normalize_video_url(url)
         target_bvid = bvid or extract_bvid(clean_url)
-        meta = {"title": user_title or "视频总结", "author": "UP主/作者", "url": clean_url, "bvid": target_bvid}
+        meta = {
+            "title": user_title or "视频总结",
+            "author": user_author or "UP主/作者",
+            "url": clean_url,
+            "bvid": target_bvid
+        }
         
         # Rigorous Double-Defense: BV-ID Hard Binding + Dialogue density + Duration check
         use_pre = False
@@ -189,8 +196,10 @@ def run_summarize_workflow(
         if not subtitles:
             raise RuntimeError("未提取到任何字幕或语音内容")
 
-        if user_title and not meta.get("title"):
+        if user_title and (not meta.get("title") or meta.get("title") in ("未知视频", "视频总结")):
             meta["title"] = user_title
+        if user_author and (not meta.get("author") or meta.get("author") in ("未知UP主", "未知作者", "UP主/作者", "")):
+            meta["author"] = user_author
 
         progress_callback(f"字幕提取就绪 (共 {len(subtitles)} 句)，提交 Gemini 智能分析...")
         markdown_result = generate_video_summary(subtitles, meta, progress_callback=progress_callback)
@@ -265,7 +274,8 @@ async def start_summarize(req: SummarizeRequest, background_tasks: BackgroundTas
         target_bvid,
         req.sub_bvid or "",
         req.pre_extracted_subtitles,
-        req.sub_source or ""
+        req.sub_source or "",
+        req.author or ""
     )
 
     return {"status": "started", "task_id": task_id}
