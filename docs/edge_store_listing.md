@@ -25,7 +25,7 @@
 ## 2. 搜索关键词 / 标签 (Search Keywords & Tags)
 
 在 Edge 商店中可添加最多 10 个搜索标签（建议填入）：
-`视频总结`, `思维导图`, `B站总结`, `YouTube总结`, `AI伴读`, `DeepSeek`, `Gemini`, `OpenAI`, `字幕提取`, `学习助手`
+`视频总结`, `思维导图`, `B站总结`, `YouTube总结`, `AI伴读`, `DeepSeek`, `Claude`, `Gemini`, `OpenAI`, `学习助手`
 
 ---
 
@@ -37,14 +37,14 @@
 🚀 BiliTube - 专为长视频学习者、科研考研党与知识工作者打造的「AI 视频总结与交互思维导图助手」！
 
 遇到 1~2 小时的深度访谈、技术教程、网课视频没时间看完？
-一键提取视频字幕，依托 Google Gemini、DeepSeek、OpenAI、硅基流动与 Ollama 等主流大模型，秒级生成清晰的「一句话主旨」、「核心深度洞见」与「Markmap 交互式脉络思维导图」，大幅提升视频信息摄取效率！
+一键提取视频字幕，依托 Google Gemini、Anthropic Claude、DeepSeek、OpenAI、硅基流动与 Ollama 等主流大模型，秒级生成清晰的「一句话主旨」、「核心深度洞见」与「Markmap 交互式脉络思维导图」，大幅提升视频信息摄取效率！
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✨ 核心亮点功能
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. 🤖 多大模型自由切换与多 Key 支持：
-   - 官方预设并支持 **Google Gemini**（每日免费 500 次配额）、**DeepSeek 深度求索**（官方高性价比与长链推理）、**OpenAI** (GPT-4o/mini)、**硅基流动** (满血V3/R1)、**Moonshot Kimi** 以及 **Ollama 本地私有大模型**。
+   - 官方预设并支持 **Google Gemini**（每日免费 500 次配额）、**Anthropic Claude**（Claude 3.5 Sonnet/Haiku/Opus）、**DeepSeek 深度求索**（官方高性价比与长链推理）、**OpenAI** (GPT-4o/mini)、**硅基流动** (满血V3/R1)、**Moonshot Kimi** 以及 **Ollama 本地私有大模型**。
    - 支持自定义 OpenAI 兼容接口（如 OpenRouter、OneAPI、第三方中转站），自由指定 Base URL 与模型名称！
 
 2. ⚡ 多平台一键极速总结：

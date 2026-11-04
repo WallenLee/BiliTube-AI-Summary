@@ -267,6 +267,7 @@ def diagnose_env():
         llm_configured = bool(custom_key and len(custom_key) > 3)
         masked = (custom_key[:4] + "..." + custom_key[-4:]) if llm_configured else ""
         names = {
+            "anthropic": "Anthropic Claude",
             "deepseek": "DeepSeek 官方",
             "openai": "OpenAI 官方",
             "siliconflow": "硅基流动",
@@ -274,7 +275,10 @@ def diagnose_env():
             "custom": "自定义兼容接口"
         }
         provider_label = names.get(provider, "第三方大模型")
-        model_label = custom_model or "默认模型"
+        if provider == "anthropic" and not custom_model:
+            model_label = "claude-3-5-sonnet"
+        else:
+            model_label = custom_model or "默认模型"
 
     bin_path = (cfg.get("sensevoice_bin") or "").strip() or r"D:\funasr\bin\llama-funasr-sensevoice.exe"
     model_path = (cfg.get("sensevoice_model") or "").strip() or r"D:\funasr\models\sensevoice-small-q8.gguf"

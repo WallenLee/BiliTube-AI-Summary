@@ -107,6 +107,14 @@ const PROVIDER_PRESETS = {
     keyHint: "直连 Google AI Studio 免费获取 Key",
     models: []
   },
+  anthropic: {
+    name: "Anthropic Claude",
+    baseUrl: "https://api.anthropic.com/v1",
+    defaultModel: "claude-3-5-sonnet-20241022",
+    keyPlaceholder: "输入 Anthropic API Key (sk-ant-...)",
+    keyHint: "官方平台获取：https://console.anthropic.com (需配合本地代理)",
+    models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"]
+  },
   deepseek: {
     name: "DeepSeek 深度求索",
     baseUrl: "https://api.deepseek.com/v1",

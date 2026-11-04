@@ -235,12 +235,134 @@ def stream_openai_compatible_chat(prompt: str, model_override: str = None):
         print(f"[{provider} Chat Stream] 异常: {e}")
         raise RuntimeError(f"{provider} 问答连接异常: {str(e)}")
 
+def resolve_anthropic_endpoint(cfg: dict) -> tuple[str, str, str]:
+    """Resolve (api_key, full_endpoint_url, model_name) for Anthropic Claude"""
+    api_key = (cfg.get("custom_api_key") or "").strip()
+    custom_base = (cfg.get("custom_base_url") or "").strip()
+    custom_model = (cfg.get("custom_model") or "").strip()
+
+    base_url = (custom_base or "https://api.anthropic.com/v1").rstrip('/')
+    if not base_url.endswith("/messages"):
+        full_url = f"{base_url}/messages"
+    else:
+        full_url = base_url
+
+    model = custom_model or "claude-3-5-sonnet-20241022"
+    return api_key, full_url, model
+
+def call_anthropic_api(prompt: str, progress_callback=None) -> str:
+    cfg = load_config()
+    api_key, endpoint_url, model = resolve_anthropic_endpoint(cfg)
+    proxy_url = cfg.get("proxy_url", "")
+
+    if not api_key:
+        raise ValueError("Anthropic API Key 未配置，请在扩展「设置」中输入对应 Key (sk-ant-...)！")
+
+    if progress_callback:
+        progress_callback(f"正在调用 Anthropic Claude ({model}) 分析字幕并生成思维导图...")
+
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "temperature": 0.4,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+    payload_bytes = json.dumps(payload).encode('utf-8')
+    headers = {
+        "content-type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01"
+    }
+
+    req = urllib.request.Request(endpoint_url, data=payload_bytes, headers=headers)
+    opener = get_network_opener(endpoint_url, proxy_url)
+
+    try:
+        print(f"[Anthropic API] 请求: {endpoint_url} (模型: {model})...")
+        with opener.open(req, timeout=180) as resp:
+            resp_body = resp.read().decode('utf-8', errors='replace')
+            data = json.loads(resp_body)
+            content_list = data.get("content", [])
+            full_text = "".join([c.get("text", "") for c in content_list if c.get("type") == "text"])
+            if not full_text:
+                raise RuntimeError(f"Claude 未返回有效文本: {resp_body[:200]}")
+            return full_text.strip()
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='replace')
+        print(f"[Anthropic API] HTTP {e.code}: {err_msg}")
+        raise RuntimeError(f"Anthropic 调用失败 (HTTP {e.code}): {err_msg}")
+    except Exception as e:
+        print(f"[Anthropic API] 异常: {e}")
+        raise RuntimeError(f"Anthropic 调用异常: {str(e)}")
+
+def stream_anthropic_chat(prompt: str, model_override: str = None):
+    cfg = load_config()
+    api_key, endpoint_url, default_model = resolve_anthropic_endpoint(cfg)
+    model = model_override or default_model
+    proxy_url = cfg.get("proxy_url", "")
+
+    if not api_key:
+        raise ValueError("Anthropic API Key 未配置，请在扩展「设置」中输入对应 Key (sk-ant-...)！")
+
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "temperature": 0.4,
+        "stream": True,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+    payload_bytes = json.dumps(payload).encode('utf-8')
+    headers = {
+        "content-type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01"
+    }
+
+    req = urllib.request.Request(endpoint_url, data=payload_bytes, headers=headers)
+    opener = get_network_opener(endpoint_url, proxy_url)
+
+    try:
+        print(f"[Anthropic Chat Stream] 请求: {endpoint_url} (模型: {model})...")
+        with opener.open(req, timeout=60) as resp:
+            for line in resp:
+                line_str = line.decode('utf-8', errors='replace')
+                if line_str.startswith('data: '):
+                    data_part = line_str[6:].strip()
+                    if not data_part:
+                        continue
+                    try:
+                        chunk_json = json.loads(data_part)
+                        evt_type = chunk_json.get("type")
+                        if evt_type == "content_block_delta":
+                            delta = chunk_json.get("delta", {})
+                            if delta.get("type") == "text_delta":
+                                txt = delta.get("text", "")
+                                if txt:
+                                    yield txt
+                        elif evt_type == "message_stop":
+                            break
+                    except Exception:
+                        pass
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='replace')
+        print(f"[Anthropic Chat Stream] HTTP {e.code}: {err_msg}")
+        raise RuntimeError(f"Anthropic 问答中断 (HTTP {e.code}): {err_msg}")
+    except Exception as e:
+        print(f"[Anthropic Chat Stream] 异常: {e}")
+        raise RuntimeError(f"Anthropic 问答连接异常: {str(e)}")
+
 def stream_gemini_chat(prompt: str, model: str = None):
-    """Unified chat stream: automatically delegates to Gemini or OpenAI-compatible provider"""
+    """Unified chat stream: automatically delegates to Gemini, Anthropic, or OpenAI-compatible provider"""
     cfg = load_config()
     provider = cfg.get("ai_provider", "gemini")
     if provider == "gemini":
         yield from _stream_gemini_chat_internal(prompt, model=model)
+    elif provider == "anthropic":
+        yield from stream_anthropic_chat(prompt, model_override=model)
     else:
         yield from stream_openai_compatible_chat(prompt, model_override=model)
 
@@ -414,11 +536,13 @@ def call_gemini_api(prompt: str, model: str = None, progress_callback=None) -> s
     raise RuntimeError(f"Gemini 所有模型均调用失败 (请检查 Clash 代理是否开启): {last_error}")
 
 def call_ai_api(prompt: str, model: str = None, progress_callback=None) -> str:
-    """Unified API call: automatically routes to Gemini or OpenAI-compatible provider"""
+    """Unified API call: automatically routes to Gemini, Anthropic, or OpenAI-compatible provider"""
     cfg = load_config()
     provider = cfg.get("ai_provider", "gemini")
     if provider == "gemini":
         return call_gemini_api(prompt, model=model, progress_callback=progress_callback)
+    elif provider == "anthropic":
+        return call_anthropic_api(prompt, progress_callback=progress_callback)
     else:
         return call_openai_compatible_api(prompt, progress_callback=progress_callback)
 
@@ -428,6 +552,7 @@ def generate_video_summary(subtitles: list[dict], metadata: dict, progress_callb
     provider = cfg.get("ai_provider", "gemini")
     provider_names = {
         "gemini": "Gemini",
+        "anthropic": "Claude",
         "deepseek": "DeepSeek",
         "openai": "OpenAI",
         "siliconflow": "硅基流动",
