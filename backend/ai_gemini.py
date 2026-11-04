@@ -99,7 +99,154 @@ def build_chat_prompt(
     prompt += f"\n用户当前提问：{question}\nAI导师解答："
     return prompt
 
+def resolve_openai_endpoint(cfg: dict) -> tuple[str, str, str, str]:
+    """Resolve (api_key, full_endpoint_url, model_name, provider_key)"""
+    provider = cfg.get("ai_provider", "gemini")
+    custom_key = (cfg.get("custom_api_key") or "").strip()
+    custom_base = (cfg.get("custom_base_url") or "").strip()
+    custom_model = (cfg.get("custom_model") or "").strip()
+
+    defaults = {
+        "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat"),
+        "openai": ("https://api.openai.com/v1", "gpt-4o-mini"),
+        "siliconflow": ("https://api.siliconflow.cn/v1", "deepseek-ai/DeepSeek-V3"),
+        "moonshot": ("https://api.moonshot.cn/v1", "moonshot-v1-8k"),
+        "ollama": ("http://127.0.0.1:11434/v1", "deepseek-r1:8b"),
+        "custom": ("https://api.deepseek.com/v1", "deepseek-chat")
+    }
+
+    def_base, def_model = defaults.get(provider, ("https://api.deepseek.com/v1", "deepseek-chat"))
+    base_url = (custom_base or def_base).rstrip('/')
+    model = custom_model or def_model
+
+    if not base_url.endswith("/chat/completions"):
+        full_url = f"{base_url}/chat/completions"
+    else:
+        full_url = base_url
+
+    return custom_key, full_url, model, provider
+
+def get_network_opener(url: str, proxy_url: str = ""):
+    """Build urllib opener, skipping proxy for local addresses like 127.0.0.1 or localhost"""
+    is_local = "127.0.0.1" in url or "localhost" in url
+    if proxy_url and not is_local:
+        handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+        return urllib.request.build_opener(handler)
+    return urllib.request.build_opener()
+
+def call_openai_compatible_api(prompt: str, progress_callback=None) -> str:
+    cfg = load_config()
+    api_key, endpoint_url, model, provider = resolve_openai_endpoint(cfg)
+    proxy_url = cfg.get("proxy_url", "")
+
+    if provider != "ollama" and not api_key:
+        raise ValueError(f"{provider.upper()} API Key 未配置，请在扩展「设置」中输入对应 Key！")
+
+    if progress_callback:
+        progress_callback(f"正在调用 {provider.upper()} ({model}) 生成思维导图报告...")
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.4
+    }
+    payload_bytes = json.dumps(payload).encode('utf-8')
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key if api_key else 'ollama'}"
+    }
+
+    req = urllib.request.Request(endpoint_url, data=payload_bytes, headers=headers)
+    opener = get_network_opener(endpoint_url, proxy_url)
+
+    try:
+        print(f"[{provider} Summary API] 请求: {endpoint_url} (模型: {model})...")
+        with opener.open(req, timeout=180) as resp:
+            resp_body = resp.read().decode('utf-8', errors='replace')
+            data = json.loads(resp_body)
+            choices = data.get("choices", [])
+            if not choices:
+                raise RuntimeError(f"大模型未返回有效内容: {resp_body[:200]}")
+            msg = choices[0].get("message", {})
+            content = msg.get("content", "")
+            if not content and msg.get("reasoning_content"):
+                content = msg.get("reasoning_content")
+            return content.strip()
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='replace')
+        print(f"[{provider} API] HTTP {e.code}: {err_msg}")
+        raise RuntimeError(f"{provider} 调用失败 (HTTP {e.code}): {err_msg}")
+    except Exception as e:
+        print(f"[{provider} API] 异常: {e}")
+        raise RuntimeError(f"{provider} 调用异常: {str(e)}")
+
+def stream_openai_compatible_chat(prompt: str, model_override: str = None):
+    cfg = load_config()
+    api_key, endpoint_url, default_model, provider = resolve_openai_endpoint(cfg)
+    model = model_override or default_model
+    proxy_url = cfg.get("proxy_url", "")
+
+    if provider != "ollama" and not api_key:
+        raise ValueError(f"{provider.upper()} API Key 未配置，请在扩展「设置」中输入对应 Key！")
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.4,
+        "stream": True
+    }
+    payload_bytes = json.dumps(payload).encode('utf-8')
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key if api_key else 'ollama'}"
+    }
+
+    req = urllib.request.Request(endpoint_url, data=payload_bytes, headers=headers)
+    opener = get_network_opener(endpoint_url, proxy_url)
+
+    try:
+        print(f"[{provider} Chat Stream] 请求: {endpoint_url} (模型: {model})...")
+        with opener.open(req, timeout=60) as resp:
+            for line in resp:
+                line_str = line.decode('utf-8', errors='replace')
+                if line_str.startswith('data: '):
+                    data_part = line_str[6:].strip()
+                    if not data_part or data_part == '[DONE]':
+                        break
+                    try:
+                        chunk_json = json.loads(data_part)
+                        choices = chunk_json.get('choices', [])
+                        if choices:
+                            delta = choices[0].get('delta', {})
+                            txt = delta.get('content') or delta.get('reasoning_content') or ''
+                            if txt:
+                                yield txt
+                    except Exception:
+                        pass
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='replace')
+        print(f"[{provider} Chat Stream] HTTP {e.code}: {err_msg}")
+        raise RuntimeError(f"{provider} 问答中断 (HTTP {e.code}): {err_msg}")
+    except Exception as e:
+        print(f"[{provider} Chat Stream] 异常: {e}")
+        raise RuntimeError(f"{provider} 问答连接异常: {str(e)}")
+
 def stream_gemini_chat(prompt: str, model: str = None):
+    """Unified chat stream: automatically delegates to Gemini or OpenAI-compatible provider"""
+    cfg = load_config()
+    provider = cfg.get("ai_provider", "gemini")
+    if provider == "gemini":
+        yield from _stream_gemini_chat_internal(prompt, model=model)
+    else:
+        yield from stream_openai_compatible_chat(prompt, model_override=model)
+
+stream_ai_chat = stream_gemini_chat
+
+def _stream_gemini_chat_internal(prompt: str, model: str = None):
     """Stream response from Gemini API using multi-model fallback chain"""
     cfg = load_config()
     api_key = cfg.get("gemini_api_key", "").strip()
@@ -266,8 +413,30 @@ def call_gemini_api(prompt: str, model: str = None, progress_callback=None) -> s
 
     raise RuntimeError(f"Gemini 所有模型均调用失败 (请检查 Clash 代理是否开启): {last_error}")
 
+def call_ai_api(prompt: str, model: str = None, progress_callback=None) -> str:
+    """Unified API call: automatically routes to Gemini or OpenAI-compatible provider"""
+    cfg = load_config()
+    provider = cfg.get("ai_provider", "gemini")
+    if provider == "gemini":
+        return call_gemini_api(prompt, model=model, progress_callback=progress_callback)
+    else:
+        return call_openai_compatible_api(prompt, progress_callback=progress_callback)
+
 def generate_video_summary(subtitles: list[dict], metadata: dict, progress_callback=None) -> str:
-    """Generate Markdown summary + Markmap structure using Gemini"""
+    """Generate Markdown summary + Markmap structure using active AI provider"""
+    cfg = load_config()
+    provider = cfg.get("ai_provider", "gemini")
+    provider_names = {
+        "gemini": "Gemini",
+        "deepseek": "DeepSeek",
+        "openai": "OpenAI",
+        "siliconflow": "硅基流动",
+        "moonshot": "Kimi",
+        "ollama": "Ollama",
+        "custom": "AI"
+    }
+    p_name = provider_names.get(provider, "AI")
+
     if progress_callback:
         progress_callback("正在整理字幕上下文与时间戳...")
 
@@ -372,7 +541,7 @@ source: "{sub_source}"
 """
 
     if progress_callback:
-        progress_callback("Gemini 正在深度阅读字幕并生成思维导图...")
+        progress_callback(f"{p_name} 正在深度阅读字幕并生成思维导图...")
 
-    result = call_gemini_api(prompt, progress_callback=progress_callback)
+    result = call_ai_api(prompt, progress_callback=progress_callback)
     return result

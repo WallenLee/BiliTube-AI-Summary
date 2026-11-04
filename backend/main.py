@@ -103,13 +103,21 @@ class SummarizeRequest(BaseModel):
     sub_source: Optional[str] = ""
 
 class ConfigRequest(BaseModel):
+    ai_provider: Optional[str] = None
     gemini_api_key: Optional[str] = None
     gemini_model: Optional[str] = None
+    custom_api_key: Optional[str] = None
+    custom_base_url: Optional[str] = None
+    custom_model: Optional[str] = None
     proxy_url: Optional[str] = None
     save_directory: Optional[str] = None
     auto_save: Optional[bool] = None
     font_scale: Optional[float] = None
     theme_mode: Optional[str] = None
+    sensevoice_bin: Optional[str] = None
+    sensevoice_model: Optional[str] = None
+    vad_model: Optional[str] = None
+    ffmpeg_bin: Optional[str] = None
 
 class OpenFileRequest(BaseModel):
     file_path: str
@@ -202,7 +210,7 @@ def run_summarize_workflow(
         if user_author and (not meta.get("author") or meta.get("author") in ("未知UP主", "未知作者", "UP主/作者", "")):
             meta["author"] = user_author
 
-        progress_callback(f"字幕提取就绪 (共 {len(subtitles)} 句)，提交 Gemini 智能分析...")
+        progress_callback(f"字幕提取就绪 (共 {len(subtitles)} 句)，提交 AI 智能分析与结构化提炼...")
         markdown_result = generate_video_summary(subtitles, meta, progress_callback=progress_callback)
 
         cfg = load_config()
@@ -240,8 +248,33 @@ def health_check():
 @app.get("/api/diagnose")
 def diagnose_env():
     cfg = load_config()
-    key = (cfg.get("gemini_api_key") or "").strip()
-    has_key = bool(key and len(key) > 5)
+    provider = cfg.get("ai_provider", "gemini")
+    gemini_key = (cfg.get("gemini_api_key") or "").strip()
+    custom_key = (cfg.get("custom_api_key") or "").strip()
+    custom_model = (cfg.get("custom_model") or "").strip()
+
+    if provider == "gemini":
+        llm_configured = bool(gemini_key and len(gemini_key) > 5 and not gemini_key.startswith("YOUR_"))
+        masked = (gemini_key[:4] + "..." + gemini_key[-4:]) if llm_configured else ""
+        provider_label = "Google Gemini"
+        model_label = cfg.get("gemini_model", "gemini-3.5-flash-lite")
+    elif provider == "ollama":
+        llm_configured = True
+        masked = "本地免Key"
+        provider_label = "Ollama 本地"
+        model_label = custom_model or "deepseek-r1"
+    else:
+        llm_configured = bool(custom_key and len(custom_key) > 3)
+        masked = (custom_key[:4] + "..." + custom_key[-4:]) if llm_configured else ""
+        names = {
+            "deepseek": "DeepSeek 官方",
+            "openai": "OpenAI 官方",
+            "siliconflow": "硅基流动",
+            "moonshot": "Moonshot Kimi",
+            "custom": "自定义兼容接口"
+        }
+        provider_label = names.get(provider, "第三方大模型")
+        model_label = custom_model or "默认模型"
 
     bin_path = (cfg.get("sensevoice_bin") or "").strip() or r"D:\funasr\bin\llama-funasr-sensevoice.exe"
     model_path = (cfg.get("sensevoice_model") or "").strip() or r"D:\funasr\models\sensevoice-small-q8.gguf"
@@ -255,9 +288,17 @@ def diagnose_env():
     return {
         "status": "ok",
         "service": True,
+        "ai_provider": provider,
+        "llm": {
+            "provider": provider,
+            "provider_label": provider_label,
+            "model": model_label,
+            "configured": llm_configured,
+            "masked": masked
+        },
         "gemini_key": {
-            "configured": has_key,
-            "masked": (key[:4] + "..." + key[-4:]) if has_key else ""
+            "configured": llm_configured,
+            "masked": masked
         },
         "sensevoice": {
             "ready": asr_ready,

@@ -88,6 +88,75 @@ const btnRestartService = document.getElementById("btn-restart-service");
 const settingsServiceStatus = document.getElementById("settings-service-status");
 const restartHint = document.getElementById("restart-hint");
 
+// AI Multi-Provider Elements
+const cfgAiProvider = document.getElementById("cfg-ai-provider");
+const groupGeminiConfig = document.getElementById("group-gemini-config");
+const groupCustomConfig = document.getElementById("group-custom-config");
+const cfgCustomApiKey = document.getElementById("cfg-custom-api-key");
+const cfgCustomBaseUrl = document.getElementById("cfg-custom-base-url");
+const cfgCustomModel = document.getElementById("cfg-custom-model");
+const presetCustomModels = document.getElementById("preset-custom-models");
+const hintCustomKey = document.getElementById("hint-custom-key");
+
+const PROVIDER_PRESETS = {
+  gemini: {
+    name: "Google Gemini",
+    baseUrl: "",
+    defaultModel: "gemini-3.5-flash-lite",
+    keyPlaceholder: "输入 Gemini API Key",
+    keyHint: "直连 Google AI Studio 免费获取 Key",
+    models: []
+  },
+  deepseek: {
+    name: "DeepSeek 深度求索",
+    baseUrl: "https://api.deepseek.com/v1",
+    defaultModel: "deepseek-chat",
+    keyPlaceholder: "输入 DeepSeek API Key (sk-...)",
+    keyHint: "官方平台获取：https://platform.deepseek.com",
+    models: ["deepseek-chat", "deepseek-reasoner"]
+  },
+  siliconflow: {
+    name: "硅基流动 SiliconFlow",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    defaultModel: "deepseek-ai/DeepSeek-V3",
+    keyPlaceholder: "输入 硅基流动 API Key (sk-...)",
+    keyHint: "官方平台获取：https://cloud.siliconflow.cn",
+    models: ["deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-72B-Instruct", "TeleAI/TeleChat2"]
+  },
+  openai: {
+    name: "OpenAI 官方",
+    baseUrl: "https://api.openai.com/v1",
+    defaultModel: "gpt-4o-mini",
+    keyPlaceholder: "输入 OpenAI API Key (sk-...)",
+    keyHint: "需配合本地 Clash 代理使用",
+    models: ["gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini", "gpt-4-turbo"]
+  },
+  moonshot: {
+    name: "Moonshot Kimi 月之暗面",
+    baseUrl: "https://api.moonshot.cn/v1",
+    defaultModel: "moonshot-v1-8k",
+    keyPlaceholder: "输入 Kimi API Key (sk-...)",
+    keyHint: "官方平台获取：https://platform.moonshot.cn",
+    models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"]
+  },
+  ollama: {
+    name: "Ollama 本地私有模型",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    defaultModel: "deepseek-r1:8b",
+    keyPlaceholder: "本地私有模型无需 Key (可留空)",
+    keyHint: "确保电脑后台已运行 ollama run xxx",
+    models: ["deepseek-r1:8b", "deepseek-r1:14b", "qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b"]
+  },
+  custom: {
+    name: "自定义兼容接口",
+    baseUrl: "https://api.deepseek.com/v1",
+    defaultModel: "deepseek-chat",
+    keyPlaceholder: "输入 API Key",
+    keyHint: "支持任何标准 OpenAI 兼容服务（如 OpenRouter、OneAPI、第三方中转站等）",
+    models: ["deepseek-chat", "gpt-4o", "claude-3-5-sonnet", "qwen-turbo"]
+  }
+};
+
 // Logs Modal Elements
 const btnLogs = document.getElementById("btn-logs");
 const btnOpenLogsFromSettings = document.getElementById("btn-open-logs-from-settings");
@@ -1953,14 +2022,56 @@ if (btnSendChat) {
   });
 }
 
+function updateProviderUI(providerKey, isInitialLoad = false) {
+  const isGemini = providerKey === "gemini";
+  if (groupGeminiConfig) groupGeminiConfig.classList.toggle("hidden", !isGemini);
+  if (groupCustomConfig) groupCustomConfig.classList.toggle("hidden", isGemini);
+
+  const preset = PROVIDER_PRESETS[providerKey] || PROVIDER_PRESETS.custom;
+  if (!isGemini) {
+    if (cfgCustomApiKey) cfgCustomApiKey.placeholder = preset.keyPlaceholder;
+    if (hintCustomKey) hintCustomKey.textContent = preset.keyHint;
+
+    if (!isInitialLoad) {
+      if (cfgCustomBaseUrl) cfgCustomBaseUrl.value = preset.baseUrl;
+      if (cfgCustomModel) cfgCustomModel.value = preset.defaultModel;
+    }
+
+    if (presetCustomModels) {
+      presetCustomModels.innerHTML = "";
+      (preset.models || []).forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        presetCustomModels.appendChild(opt);
+      });
+    }
+  }
+}
+
+if (cfgAiProvider) {
+  cfgAiProvider.addEventListener("change", () => {
+    updateProviderUI(cfgAiProvider.value, false);
+  });
+}
+
 // --- 10. Settings Management & Native Folder Browser ---
 async function loadSettings() {
   try {
     const res = await fetch(`${API_BASE}/api/config`);
     if (res.ok) {
       const cfg = await res.json();
+      const provider = cfg.ai_provider || "gemini";
+      if (cfgAiProvider) cfgAiProvider.value = provider;
       document.getElementById("cfg-api-key").value = cfg.gemini_api_key || "";
-      document.getElementById("cfg-model").value = cfg.gemini_model || "gemini-3.5-flash";
+      document.getElementById("cfg-model").value = cfg.gemini_model || "gemini-3.5-flash-lite";
+
+      const preset = PROVIDER_PRESETS[provider] || PROVIDER_PRESETS.custom;
+      if (cfgCustomApiKey) cfgCustomApiKey.value = cfg.custom_api_key || "";
+      if (cfgCustomBaseUrl) cfgCustomBaseUrl.value = cfg.custom_base_url || preset.baseUrl;
+      if (cfgCustomModel) cfgCustomModel.value = cfg.custom_model || preset.defaultModel;
+
+      updateProviderUI(provider, true);
+
       document.getElementById("cfg-proxy").value = cfg.proxy_url || "http://127.0.0.1:7897";
       cfgSaveDirInput.value = cfg.save_directory || "";
       document.getElementById("cfg-auto-save").checked = cfg.auto_save === true;
@@ -1999,9 +2110,14 @@ btnBrowseFolder.addEventListener("click", browseWindowsFolder);
 cfgSaveDirInput.addEventListener("click", browseWindowsFolder);
 
 async function saveSettings() {
+  const selectedProvider = cfgAiProvider ? cfgAiProvider.value : "gemini";
   const newCfg = {
+    ai_provider: selectedProvider,
     gemini_api_key: document.getElementById("cfg-api-key").value.trim(),
     gemini_model: document.getElementById("cfg-model").value,
+    custom_api_key: cfgCustomApiKey ? cfgCustomApiKey.value.trim() : "",
+    custom_base_url: cfgCustomBaseUrl ? cfgCustomBaseUrl.value.trim() : "",
+    custom_model: cfgCustomModel ? cfgCustomModel.value.trim() : "",
     proxy_url: document.getElementById("cfg-proxy").value.trim(),
     save_directory: cfgSaveDirInput.value.trim(),
     auto_save: document.getElementById("cfg-auto-save").checked,
@@ -2291,7 +2407,15 @@ async function runDiagnostics() {
       }
 
       if (diagKeyStatus) {
-        if (data.gemini_key && data.gemini_key.configured) {
+        if (data.llm) {
+          if (data.llm.configured) {
+            diagKeyStatus.textContent = `🟢 ${data.llm.provider_label} (${data.llm.masked})`;
+            diagKeyStatus.className = "status-badge online";
+          } else {
+            diagKeyStatus.textContent = `🔴 ${data.llm.provider_label} 未配置Key`;
+            diagKeyStatus.className = "status-badge offline";
+          }
+        } else if (data.gemini_key && data.gemini_key.configured) {
           diagKeyStatus.textContent = `🟢 已就绪 (${data.gemini_key.masked})`;
           diagKeyStatus.className = "status-badge online";
         } else {

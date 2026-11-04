@@ -5,8 +5,12 @@ from pathlib import Path
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
 DEFAULT_CONFIG = {
+    "ai_provider": "gemini",
     "gemini_api_key": "YOUR_GEMINI_API_KEY",
     "gemini_model": "gemini-3.5-flash-lite",
+    "custom_api_key": "",
+    "custom_base_url": "https://api.deepseek.com/v1",
+    "custom_model": "deepseek-chat",
     "proxy_url": "http://127.0.0.1:7897",
     "save_directory": os.path.normpath(os.path.expanduser("~/Documents/VideoSummaries")),
     "auto_save": False,
