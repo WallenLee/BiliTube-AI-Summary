@@ -23,6 +23,7 @@
       <div class="header-actions">
         <button id="btn-theme-toggle" class="icon-btn" title="切换全局深色/浅色主题">🌓</button>
         <button id="btn-logs" class="icon-btn" title="查看本地服务实时运行日志">📜</button>
+        <button id="btn-guide" class="icon-btn" title="新手入门与本地服务配置指引">📖</button>
         <button id="btn-settings" class="icon-btn" title="配置与存储设置">⚙️</button>
       </div>
     </header>
@@ -354,6 +355,103 @@
             <span class="btn-text">确认保存文档</span>
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Onboarding & Setup Guide Modal -->
+  <div id="guide-modal" class="modal hidden">
+    <div class="modal-dialog guide-dialog">
+      <div class="modal-header">
+        <h3>📖 新手快速入门与本地服务配置指引</h3>
+        <button id="btn-close-guide" class="close-btn" title="关闭">&times;</button>
+      </div>
+      <div class="modal-body guide-body">
+
+        <!-- Environment Diagnostic Card -->
+        <div class="guide-diagnostic-card">
+          <div class="diagnostic-header">
+            <span class="diagnostic-title">🔍 运行环境实时自检</span>
+            <button type="button" id="btn-refresh-diag" class="tiny-btn" title="重新检测各项连接状态">🔄 刷新状态</button>
+          </div>
+          <div class="diagnostic-grid">
+            <div class="diag-item">
+              <span class="diag-label">本地调度服务 (8765):</span>
+              <span id="diag-service-status" class="status-badge checking">检测中...</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Gemini API Key:</span>
+              <span id="diag-key-status" class="status-badge checking">检测中...</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">SenseVoice 离线转写:</span>
+              <span id="diag-asr-status" class="status-badge checking">检测中...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 1: Quick Start (3 Steps) -->
+        <div class="guide-section">
+          <h4>🚀 极简三步上手指南 (2分钟搞定)</h4>
+
+          <div class="guide-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <b>获取免费 Google Gemini API Key</b>
+              <p>Google 为个人开发者提供每日 500 次调用配额，完全零成本：</p>
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" class="guide-link">👉 点击前往 Google AI Studio 免费创建 Key</a>
+              <p class="step-tip">获取 Key 后，在插件右上角点击「⚙️ 设置」，粘贴至 API Key 框中保存即可。</p>
+            </div>
+          </div>
+
+          <div class="guide-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <b>下载并启动本地调度服务</b>
+              <p>为了保障数据隐私与音视频快速切片，本插件采用本地轻量后台驱动（安全无后门）：</p>
+              <div class="step-action-box">
+                <a href="https://github.com/WallenLee/BiliTube-AI-Summary/releases" target="_blank" class="guide-link">📦 点击前往 GitHub 下载完整发布包</a>
+                <p>解压到电脑任意文件夹，双击运行 <code>start_server.bat</code> 即可（保持窗口在后台运行）。</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="guide-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <b>一键总结与本地知识库保存</b>
+              <p>在任意 B 站或 YouTube 视频播放页，点击插件面板的「✨ 一键总结」，即可生成结构化报告与 Markmap 交互思维导图；点击「💾 保存这篇到本地」可原位保存或覆盖更新到 Obsidian 等本地知识库。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: SenseVoice Offline ASR Setup for Bilibili Videos without CC -->
+        <div class="guide-section highlight-box">
+          <h4>🎙️ 进阶：B 站/YouTube 无字幕视频转写配置 (SenseVoice GPU)</h4>
+          <p class="section-intro">
+            B 站约 40% 的视频（深度访谈、无官方字幕短片、演讲等）没有现成字幕。本插件内置了基于阿里通义 <b>SenseVoice</b> 的本地离线 GPU 语音识别引擎，即使没有字幕也能自动抓取音频高速转写！
+          </p>
+
+          <div class="sub-step">
+            <b>1. 所需文件清单：</b>
+            <ul class="file-checklist">
+              <li><code>llama-funasr-sensevoice.exe</code>（本地可执行引擎，支持 NVIDIA/AMD/Intel 显卡 GPU 加速）</li>
+              <li><code>sensevoice-small-q8.gguf</code>（SenseVoice 量化模型，约 200MB）</li>
+              <li><code>fsmn-vad.gguf</code>（语音端点检测与静音切分模型，约 10MB）</li>
+              <li><code>ffmpeg.exe</code>（音视频切片工具，建议放入系统 PATH 或固定目录）</li>
+            </ul>
+          </div>
+
+          <div class="sub-step">
+            <b>2. 一键配置步骤：</b>
+            <p>将上述文件放置于您的电脑目录中（例如 <code>D:\funasr\</code>），在插件右上角「⚙️ 设置」中，填写对应的路径保存，即可自动启用无字幕深度语音转写！</p>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-guide-open-settings" class="primary-btn">⚙️ 前往设置面板</button>
+        <button type="button" id="btn-guide-close" class="ghost-btn">关闭指引</button>
       </div>
     </div>
   </div>

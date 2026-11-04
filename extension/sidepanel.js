@@ -111,6 +111,17 @@ const btnFontDec = document.getElementById("btn-font-dec");
 const btnFontInc = document.getElementById("btn-font-inc");
 const btnFontReset = document.getElementById("btn-font-reset");
 
+// Guide Modal & Diagnostic Elements
+const guideModal = document.getElementById("guide-modal");
+const btnGuide = document.getElementById("btn-guide");
+const btnCloseGuide = document.getElementById("btn-close-guide");
+const btnGuideClose = document.getElementById("btn-guide-close");
+const btnGuideOpenSettings = document.getElementById("btn-guide-open-settings");
+const btnRefreshDiag = document.getElementById("btn-refresh-diag");
+const diagServiceStatus = document.getElementById("diag-service-status");
+const diagKeyStatus = document.getElementById("diag-key-status");
+const diagAsrStatus = document.getElementById("diag-asr-status");
+
 let logPollTimer = null;
 let lastLogText = "";
 
@@ -757,7 +768,8 @@ document.addEventListener("click", (e) => {
 async function startSummarize() {
   const isHealthy = await checkServiceHealth();
   if (!isHealthy) {
-    alert("请先双击运行 backend 目录下的 start_server.bat 启动本地调度服务！");
+    openGuideModal();
+    showToast("⚠️ 本地服务未启动，已为您打开环境配置指引！", 3500);
     return;
   }
 
@@ -2252,6 +2264,116 @@ if (btnRefreshLogs) {
     lastLogText = "";
     fetchAndRenderLogs();
   });
+}
+
+// --- User Onboarding & Environment Diagnostics ---
+async function runDiagnostics() {
+  if (diagServiceStatus) {
+    diagServiceStatus.textContent = "检测中...";
+    diagServiceStatus.className = "status-badge checking";
+  }
+  if (diagKeyStatus) {
+    diagKeyStatus.textContent = "检测中...";
+    diagKeyStatus.className = "status-badge checking";
+  }
+  if (diagAsrStatus) {
+    diagAsrStatus.textContent = "检测中...";
+    diagAsrStatus.className = "status-badge checking";
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/api/diagnose`);
+    if (res.ok) {
+      const data = await res.json();
+      if (diagServiceStatus) {
+        diagServiceStatus.textContent = "🟢 运行正常 (8765)";
+        diagServiceStatus.className = "status-badge online";
+      }
+
+      if (diagKeyStatus) {
+        if (data.gemini_key && data.gemini_key.configured) {
+          diagKeyStatus.textContent = `🟢 已就绪 (${data.gemini_key.masked})`;
+          diagKeyStatus.className = "status-badge online";
+        } else {
+          diagKeyStatus.textContent = "🔴 未配置 (请在设置中填写)";
+          diagKeyStatus.className = "status-badge offline";
+        }
+      }
+
+      if (diagAsrStatus) {
+        if (data.sensevoice && data.sensevoice.ready) {
+          diagAsrStatus.textContent = "🟢 GPU就绪 (本地离线)";
+          diagAsrStatus.className = "status-badge online";
+        } else {
+          diagAsrStatus.textContent = "🟡 未配置 (无字幕转写用)";
+          diagAsrStatus.className = "status-badge checking";
+        }
+      }
+      return;
+    }
+  } catch (e) {
+    // Backend offline
+  }
+
+  if (diagServiceStatus) {
+    diagServiceStatus.textContent = "🔴 未启动 (请运行 bat)";
+    diagServiceStatus.className = "status-badge offline";
+  }
+  if (diagKeyStatus) {
+    diagKeyStatus.textContent = "⚪ 等待服务就绪";
+    diagKeyStatus.className = "status-badge offline";
+  }
+  if (diagAsrStatus) {
+    diagAsrStatus.textContent = "⚪ 等待服务就绪";
+    diagAsrStatus.className = "status-badge offline";
+  }
+}
+
+function openGuideModal() {
+  if (!guideModal) return;
+  if (settingsModal && !settingsModal.classList.contains("hidden")) {
+    settingsModal.classList.add("hidden");
+  }
+  if (logsModal && !logsModal.classList.contains("hidden")) {
+    logsModal.classList.add("hidden");
+  }
+  guideModal.classList.remove("hidden");
+  runDiagnostics();
+}
+
+function closeGuideModal() {
+  if (!guideModal) return;
+  guideModal.classList.add("hidden");
+}
+
+if (btnGuide) {
+  btnGuide.addEventListener("click", openGuideModal);
+}
+if (btnCloseGuide) {
+  btnCloseGuide.addEventListener("click", closeGuideModal);
+}
+if (btnGuideClose) {
+  btnGuideClose.addEventListener("click", closeGuideModal);
+}
+if (btnRefreshDiag) {
+  btnRefreshDiag.addEventListener("click", runDiagnostics);
+}
+if (btnGuideOpenSettings) {
+  btnGuideOpenSettings.addEventListener("click", () => {
+    closeGuideModal();
+    loadSettings();
+    if (settingsModal) settingsModal.classList.remove("hidden");
+  });
+}
+if (serviceStatusEl) {
+  serviceStatusEl.style.cursor = "pointer";
+  serviceStatusEl.title = "点击查看环境自检与使用指引";
+  serviceStatusEl.addEventListener("click", openGuideModal);
+}
+if (settingsServiceStatus) {
+  settingsServiceStatus.style.cursor = "pointer";
+  settingsServiceStatus.title = "点击查看环境自检与使用指引";
+  settingsServiceStatus.addEventListener("click", openGuideModal);
 }
 
 // Init

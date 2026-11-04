@@ -2,6 +2,7 @@ import asyncio
 import collections
 import datetime
 import json
+import os
 import re
 import sys
 import uuid
@@ -235,6 +236,38 @@ def run_summarize_workflow(
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "app": "Video Summary & Mindmap Studio"}
+
+@app.get("/api/diagnose")
+def diagnose_env():
+    cfg = load_config()
+    key = (cfg.get("gemini_api_key") or "").strip()
+    has_key = bool(key and len(key) > 5)
+
+    bin_path = (cfg.get("sensevoice_bin") or "").strip() or r"D:\funasr\bin\llama-funasr-sensevoice.exe"
+    model_path = (cfg.get("sensevoice_model") or "").strip() or r"D:\funasr\models\sensevoice-small-q8.gguf"
+    vad_path = (cfg.get("vad_model") or "").strip() or r"D:\funasr\models\fsmn-vad.gguf"
+
+    has_bin = os.path.exists(bin_path)
+    has_model = os.path.exists(model_path)
+    has_vad = os.path.exists(vad_path)
+    asr_ready = has_bin and has_model and has_vad
+
+    return {
+        "status": "ok",
+        "service": True,
+        "gemini_key": {
+            "configured": has_key,
+            "masked": (key[:4] + "..." + key[-4:]) if has_key else ""
+        },
+        "sensevoice": {
+            "ready": asr_ready,
+            "bin_exists": has_bin,
+            "model_exists": has_model,
+            "vad_exists": has_vad,
+            "bin_path": bin_path,
+            "model_path": model_path
+        }
+    }
 
 @app.get("/api/config")
 def get_config():
