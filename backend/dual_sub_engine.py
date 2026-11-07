@@ -78,10 +78,13 @@ def normalize_video_url(raw_url: str) -> str:
     yt_match = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', raw_url)
     if yt_match:
         return f"https://www.youtube.com/watch?v={yt_match.group(1)}"
+    x_match = re.search(r'(?:x\.com|twitter\.com)/([^/]+)/status/(\d+)', raw_url)
+    if x_match:
+        return f"https://x.com/{x_match.group(1)}/status/{x_match.group(2)}"
     return raw_url.split('?')[0].split('#')[0]
 
 def extract_bvid(url: str) -> str:
-    """Extract canonical video ID from any URL (BVID for Bilibili, 11-char ID for YouTube)"""
+    """Extract canonical video ID from any URL (BVID for Bilibili, 11-char ID for YouTube, Tweet ID for X)"""
     if not url:
         return ""
     match = re.search(r'(BV[a-zA-Z0-9]{10})', url, re.IGNORECASE)
@@ -90,6 +93,9 @@ def extract_bvid(url: str) -> str:
     yt_match = re.search(r'(?:v=|youtu\.be/|embed/|v/|shorts/)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         return yt_match.group(1)
+    x_match = re.search(r'(?:x\.com|twitter\.com)/[^/]+/status/(\d+)', url)
+    if x_match:
+        return x_match.group(1)
     return ""
 
 def get_video_expected_duration(url: str) -> float:
@@ -227,7 +233,7 @@ def get_bilibili_subtitles(url: str, progress_callback=None) -> tuple[list[dict]
 def get_subtitles_via_ytdlp(url: str, progress_callback=None) -> tuple[list[dict], dict] | None:
     """Fast channel: Attempt to get subtitles using yt-dlp metadata"""
     cfg = load_config()
-    proxy = cfg.get("proxy_url") if "youtube.com" in url or "youtu.be" in url else None
+    proxy = cfg.get("proxy_url") if any(k in url for k in ["youtube.com", "youtu.be", "x.com", "twitter.com"]) else None
 
     ydl_opts = {
         'skip_download': True,
@@ -251,11 +257,12 @@ def get_subtitles_via_ytdlp(url: str, progress_callback=None) -> tuple[list[dict
 
             title = info.get('title', '未知视频')
             author = info.get('uploader', info.get('channel', '未知作者'))
+            platform = "youtube" if ("youtube.com" in url or "youtu.be" in url) else ("x" if ("x.com" in url or "twitter.com" in url) else "other")
             meta = {
                 "title": title,
                 "author": author,
                 "url": url,
-                "platform": "youtube" if ("youtube.com" in url or "youtu.be" in url) else "other"
+                "platform": platform
             }
 
             subs = info.get('subtitles', {})
@@ -348,7 +355,7 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
     """
     clean_url = normalize_video_url(url)
     cfg = load_config()
-    proxy = cfg.get("proxy_url") if "youtube.com" in clean_url or "youtu.be" in clean_url else None
+    proxy = cfg.get("proxy_url") if any(k in clean_url for k in ["youtube.com", "youtu.be", "x.com", "twitter.com"]) else None
     ffmpeg_bin = cfg.get("ffmpeg_bin", "").strip() or "ffmpeg"
 
     temp_dir = tempfile.gettempdir()
@@ -362,8 +369,8 @@ def download_audio_and_transcribe(url: str, meta: dict, progress_callback=None) 
         progress_callback("未检测到有效字幕，正在快速抓取轻量音频 (yt-dlp)...")
 
     ydl_opts = {
-        # 1. 优先抓取原声人声音频（防止 YouTube 多音轨视频下载到错误的外语配音/小语种音轨）
-        'format': 'ba[format_note*=original]/ba[format_note*=default]/ba[language^=en]/ba[language^=zh]/ba[abr<=96]/worstaudio/ba/b',
+        # 1. 优先抓取原声人声音频；若为 X/Twitter 等单流 MP4 格式则降级抓取整体视频提取音轨
+        'format': 'ba[format_note*=original]/ba[format_note*=default]/ba[language^=en]/ba[language^=zh]/ba[abr<=96]/worstaudio/ba/b/best',
         'outtmpl': output_template,
         # 2. 严格禁用合集/剧集连带下载，确保 100% 仅下载目标单体视频
         'noplaylist': True,

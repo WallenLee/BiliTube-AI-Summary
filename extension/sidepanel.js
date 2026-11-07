@@ -446,6 +446,10 @@ function normalizeVideoUrl(rawUrl) {
   if (ytMatch) {
     return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
   }
+  const xMatch = rawUrl.match(/(?:x\.com|twitter\.com)\/([^/]+)\/status\/(\d+)/);
+  if (xMatch) {
+    return `https://x.com/${xMatch[1]}/status/${xMatch[2]}`;
+  }
   return rawUrl.split('?')[0].split('#')[0];
 }
 
@@ -455,6 +459,8 @@ function extractCanonicalVideoId(rawUrl) {
   if (biliMatch) return biliMatch[1];
   const ytMatch = rawUrl.match(/(?:v=|youtu\.be\/|embed\/|v\/|shorts\/)([a-zA-Z0-9_-]{11})/);
   if (ytMatch) return ytMatch[1];
+  const xMatch = rawUrl.match(/(?:x\.com|twitter\.com)\/[^/]+\/status\/(\d+)/);
+  if (xMatch) return xMatch[1];
   return "";
 }
 
@@ -474,6 +480,7 @@ async function detectCurrentVideoTab() {
     let displayTitle = (tab.title || "未知标题")
       .replace(/_哔哩哔哩_bilibili$/i, '')
       .replace(/ - YouTube$/i, '')
+      .replace(/\s*\/ X$/i, '')
       .trim();
 
     videoTitleEl.textContent = displayTitle;
@@ -486,6 +493,10 @@ async function detectCurrentVideoTab() {
     } else if (tab.url.includes("youtube.com") || tab.url.includes("youtu.be")) {
       videoPlatformEl.textContent = "YouTube 视频";
       videoPlatformEl.style.background = "#ff0000";
+      btnSummarize.disabled = false;
+    } else if (tab.url.includes("x.com") || tab.url.includes("twitter.com")) {
+      videoPlatformEl.textContent = "X / Twitter 视频";
+      videoPlatformEl.style.background = "#0f1419";
       btnSummarize.disabled = false;
     } else {
       videoPlatformEl.textContent = "当前网页";
@@ -888,6 +899,61 @@ async function startSummarize() {
   let preTitle = currentActiveTab.title || "";
   let preAuthor = currentActiveTab.author || "";
   let subSource = "";
+
+  // For X (Twitter), timeline/feed pages can render multiple video posts simultaneously.
+  // We query content script to lock onto the currently playing (or most visible) video's tweet permalink.
+  const isX = currentActiveTab.url.includes("x.com") || currentActiveTab.url.includes("twitter.com");
+  if (isX) {
+    progressText.textContent = "⚡ 正在定位您正在播放或当前浏览的 X 视频推文...";
+    try {
+      let infoResp = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(currentActiveTab.id, { action: "GET_VIDEO_INFO" }, (resp) => {
+          if (chrome.runtime.lastError || !resp) resolve(null);
+          else resolve(resp);
+        });
+        setTimeout(() => resolve(null), 800);
+      });
+
+      if (!infoResp) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: currentActiveTab.id },
+            files: ["content_script.js"]
+          });
+          infoResp = await new Promise((resolve) => {
+            chrome.tabs.sendMessage(currentActiveTab.id, { action: "GET_VIDEO_INFO" }, (resp) => {
+              if (chrome.runtime.lastError || !resp) resolve(null);
+              else resolve(resp);
+            });
+            setTimeout(() => resolve(null), 800);
+          });
+        } catch (injErr) {}
+      }
+
+      if (infoResp && infoResp.url && infoResp.url.includes("/status/")) {
+        currentActiveTab.url = infoResp.url;
+        currentActiveTab.cleanUrl = normalizeVideoUrl(infoResp.url);
+        currentActiveTab.bvid = extractCanonicalVideoId(infoResp.url);
+        if (infoResp.title) {
+          preTitle = infoResp.title;
+          videoTitleEl.textContent = preTitle;
+        }
+        if (infoResp.author) {
+          preAuthor = infoResp.author;
+        }
+        videoUrlEl.textContent = currentActiveTab.cleanUrl;
+      }
+    } catch (e) {
+      console.warn("X video info probe error:", e);
+    }
+
+    if (!currentActiveTab.url.includes("/status/")) {
+      btnSummarize.disabled = false;
+      progressContainer.classList.add("hidden");
+      alert("未在当前页面检测到正在播放或可见的 X 视频。\n请先点击播放您想要总结的视频，或进入该推文详情页后重试。");
+      return;
+    }
+  }
 
   const cleanUrl = normalizeVideoUrl(currentActiveTab.url);
   const targetVideoId = extractCanonicalVideoId(cleanUrl);

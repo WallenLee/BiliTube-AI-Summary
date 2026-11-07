@@ -1,14 +1,61 @@
-// Content script running on Bilibili and YouTube pages
+// Content script running on Bilibili, YouTube, and X (Twitter) pages
+
+let lastActiveVideo = null;
+let lastActiveVideoTime = 0;
+
+// Track active video across timelines/feeds (play, playing, timeupdate)
+['play', 'playing', 'timeupdate'].forEach(eventType => {
+  document.addEventListener(eventType, (e) => {
+    if (e.target && e.target.tagName === 'VIDEO') {
+      lastActiveVideo = e.target;
+      lastActiveVideoTime = Date.now();
+    }
+  }, true);
+});
+
+function isXPlatform() {
+  const host = window.location.hostname;
+  return host.includes('x.com') || host.includes('twitter.com');
+}
+
+function getMostVisibleVideo(videos) {
+  if (!videos || videos.length === 0) return null;
+  let bestVideo = null;
+  let minDistance = Infinity;
+  const centerY = window.innerHeight / 2;
+
+  for (const v of videos) {
+    const rect = v.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    // Visible within viewport
+    if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+
+    const vCenter = rect.top + rect.height / 2;
+    const dist = Math.abs(vCenter - centerY);
+    if (dist < minDistance) {
+      minDistance = dist;
+      bestVideo = v;
+    }
+  }
+  return bestVideo || videos[0];
+}
 
 function findActiveVideo() {
   const videos = Array.from(document.querySelectorAll('video'));
   if (videos.length === 0) return null;
   if (videos.length === 1) return videos[0];
 
-  const playing = videos.find(v => !v.paused && v.currentTime > 0);
+  // 1. Check actively playing video
+  const playing = videos.find(v => !v.paused && !v.ended && v.currentTime > 0);
   if (playing) return playing;
 
-  return videos[0];
+  // 2. Check most recently played video that is still in DOM
+  if (lastActiveVideo && lastActiveVideo.isConnected) {
+    return lastActiveVideo;
+  }
+
+  // 3. Fallback: video closest to viewport center (most visible)
+  return getMostVisibleVideo(videos);
 }
 
 function showSeekToast(seconds) {
@@ -234,8 +281,103 @@ async function tryExtractBilibiliSubtitlesInBrowser(expectedBvid = "") {
   }
 }
 
+// Helper to extract tweet info (status permalink, author, tweet text) from active video on X (Twitter)
+function getTweetInfoFromVideo(video) {
+  const targetVideo = video || findActiveVideo();
+  const currentUrl = window.location.href;
+  const detailMatch = currentUrl.match(/(?:x\.com|twitter\.com)\/([^/]+)\/status\/(\d+)/);
+
+  let statusUrl = "";
+  let tweetId = "";
+  let author = "";
+  let title = "";
+
+  const article = targetVideo ? (
+    targetVideo.closest('article[data-testid="tweet"]') ||
+    targetVideo.closest('article') ||
+    targetVideo.closest('div[data-testid="cellInnerDiv"]')
+  ) : null;
+
+  if (article) {
+    // 1. Locate tweet status URL
+    const timeEl = article.querySelector('time');
+    let statusLink = timeEl ? timeEl.closest('a') : null;
+    if (!statusLink) {
+      const links = Array.from(article.querySelectorAll('a[href*="/status/"]'));
+      statusLink = links.find(a => /\/[^/]+\/status\/\d+$/.test(a.getAttribute('href') || '')) || links[0];
+    }
+
+    if (statusLink) {
+      let href = statusLink.getAttribute('href') || "";
+      if (href.startsWith('/')) {
+        href = 'https://x.com' + href;
+      }
+      const m = href.match(/(?:x\.com|twitter\.com)\/([^/]+)\/status\/(\d+)/);
+      if (m) {
+        statusUrl = `https://x.com/${m[1]}/status/${m[2]}`;
+        tweetId = m[2];
+      }
+    }
+
+    // 2. Locate tweet author
+    const userEl = article.querySelector('div[data-testid="User-Name"]');
+    if (userEl) {
+      const rawAuthor = userEl.innerText || userEl.textContent || "";
+      const parts = rawAuthor.split('\n').map(p => p.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        author = parts.slice(0, 2).join(' ');
+      }
+    }
+
+    // 3. Locate tweet text
+    const textEl = article.querySelector('div[data-testid="tweetText"]');
+    if (textEl) {
+      title = (textEl.innerText || textEl.textContent || "").trim();
+    }
+  }
+
+  // Fallback to detail page URL if on single status page
+  if (!statusUrl && detailMatch) {
+    statusUrl = `https://x.com/${detailMatch[1]}/status/${detailMatch[2]}`;
+    tweetId = detailMatch[2];
+  }
+
+  if (!author && isXPlatform()) {
+    const userEl = document.querySelector('article div[data-testid="User-Name"]');
+    if (userEl) {
+      const parts = (userEl.innerText || userEl.textContent || "").split('\n').map(p => p.trim()).filter(Boolean);
+      if (parts.length > 0) author = parts.slice(0, 2).join(' ');
+    }
+  }
+
+  if (!title && isXPlatform()) {
+    const textEl = document.querySelector('article div[data-testid="tweetText"]');
+    if (textEl && textEl.textContent.trim()) {
+      title = textEl.textContent.trim();
+    }
+  }
+
+  return {
+    url: statusUrl,
+    id: tweetId,
+    author: author || "X 创作者",
+    title: title || "X 视频"
+  };
+}
+
 // Extract accurate real-time video title from page DOM (immune to SPA title lag)
 function getPageVideoTitle() {
+  if (isXPlatform()) {
+    const video = findActiveVideo();
+    const info = getTweetInfoFromVideo(video);
+    if (info && info.title && info.title !== "X 视频") {
+      return info.title;
+    }
+    let t = (document.title || "").trim();
+    t = t.replace(/\s*\/ X$/i, '').trim();
+    return t || "X 视频";
+  }
+
   // 1. Try Bilibili specific title elements in DOM
   const biliH1 = document.querySelector('h1.video-title') 
     || document.querySelector('.video-info-title-inner')
@@ -263,6 +405,14 @@ function getPageVideoTitle() {
 
 // Extract real-time author / channel name from page DOM
 function getPageVideoAuthor() {
+  if (isXPlatform()) {
+    const video = findActiveVideo();
+    const info = getTweetInfoFromVideo(video);
+    if (info && info.author) {
+      return info.author;
+    }
+    return "X 创作者";
+  }
   if (window.location.hostname.includes("bilibili.com")) {
     const authorEl = document.querySelector('.up-name') 
       || document.querySelector('.username')
@@ -579,6 +729,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const targetSeconds = parseFloat(request.seconds);
     const video = findActiveVideo();
     if (video && !isNaN(targetSeconds)) {
+      if (isXPlatform()) {
+        try {
+          video.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {}
+      }
       video.currentTime = targetSeconds;
       video.play().catch(() => {});
       showSeekToast(targetSeconds);
@@ -591,6 +746,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "GET_VIDEO_INFO") {
     const video = findActiveVideo();
+    if (isXPlatform()) {
+      const info = getTweetInfoFromVideo(video);
+      sendResponse({
+        title: info ? info.title : getPageVideoTitle(),
+        author: info ? info.author : getPageVideoAuthor(),
+        url: (info && info.url) ? info.url : window.location.href,
+        tweetId: info ? info.id : "",
+        currentTime: video ? video.currentTime : 0
+      });
+      return true;
+    }
+
     sendResponse({
       title: getPageVideoTitle(),
       author: getPageVideoAuthor(),
@@ -601,7 +768,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "EXTRACT_SUBTITLES_DIRECT") {
-    if (window.location.hostname.includes("bilibili.com")) {
+    if (isXPlatform()) {
+      const video = findActiveVideo();
+      const info = getTweetInfoFromVideo(video);
+      sendResponse({
+        status: "empty",
+        platform: "x",
+        url: info?.url || window.location.href,
+        bvid: info?.id || "",
+        title: info?.title || getPageVideoTitle(),
+        author: info?.author || getPageVideoAuthor()
+      });
+      return true;
+    } else if (window.location.hostname.includes("bilibili.com")) {
       const expectedId = request.expected_id || request.expected_bvid || "";
       tryExtractBilibiliSubtitlesInBrowser(expectedId).then(result => {
         if (result && result.rejected) {
