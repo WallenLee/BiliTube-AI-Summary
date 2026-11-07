@@ -899,6 +899,7 @@ async function startSummarize() {
   let preTitle = currentActiveTab.title || "";
   let preAuthor = currentActiveTab.author || "";
   let subSource = "";
+  let tabRes = null;
 
   // For X (Twitter), timeline/feed pages can render multiple video posts simultaneously.
   // We query content script to lock onto the currently playing (or most visible) video's tweet permalink.
@@ -960,7 +961,7 @@ async function startSummarize() {
 
   // 1. Try direct in-browser extraction first with Video-ID Handshake Verification (0.2s)
   try {
-    let tabRes = await new Promise((resolve) => {
+    tabRes = await new Promise((resolve) => {
       chrome.tabs.sendMessage(currentActiveTab.id, {
         action: "EXTRACT_SUBTITLES_DIRECT",
         expected_id: targetVideoId,
