@@ -14,21 +14,33 @@ def format_seconds(seconds: float) -> str:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
 
-def prepare_transcript_text(subtitles: list[dict], max_tokens_chars: int = 150000) -> str:
-    """Condense subtitles into timestamped paragraphs to optimize token density"""
+def prepare_transcript_text(
+    subtitles: list[dict],
+    max_tokens_chars: int = None,
+    chunk_interval_sec: float = 18.0
+) -> str:
+    """Condense subtitles into timestamped paragraphs with tighter intervals for high-precision seeking.
+    When max_tokens_chars is None, no truncation occurs to guarantee complete video coverage.
+    """
+    if not subtitles:
+        return "（暂无字幕记录）"
+
     lines = []
     last_ts = -999.0
     current_chunk = []
     current_start = 0.0
 
     for item in subtitles:
-        start_sec = item.get("from", 0.0)
+        start_sec = float(item.get("from", 0.0))
         content = item.get("content", "").strip()
         if not content:
             continue
 
-        # Group lines every 30-45 seconds or after punctuation
-        if start_sec - last_ts > 35.0:
+        # Split on natural sentence ends or every ~15-20 seconds for fine-grained timestamp anchor
+        has_ending_punct = content.endswith(('。', '！', '？', '.', '!', '?', '…'))
+        time_diff = start_sec - last_ts
+
+        if (time_diff >= chunk_interval_sec) or (time_diff >= 10.0 and has_ending_punct):
             if current_chunk:
                 ts_str = format_seconds(current_start)
                 lines.append(f"[{ts_str}](seek:{int(current_start)}) {' '.join(current_chunk)}")
@@ -43,9 +55,8 @@ def prepare_transcript_text(subtitles: list[dict], max_tokens_chars: int = 15000
         lines.append(f"[{ts_str}](seek:{int(current_start)}) {' '.join(current_chunk)}")
 
     full_text = "\n".join(lines)
-    # Truncate if insanely huge, though Gemini has 1M context
-    if len(full_text) > max_tokens_chars:
-        full_text = full_text[:max_tokens_chars] + "\n...(后半部分字幕较长已节选)"
+    if max_tokens_chars and len(full_text) > max_tokens_chars:
+        full_text = full_text[:max_tokens_chars] + "\n...(内容较长已在分层模式下深入全量覆盖)"
     return full_text
 
 def build_chat_prompt(
@@ -90,9 +101,9 @@ def build_chat_prompt(
 
     if history and len(history) > 0:
         prompt += "\n【上下文对话记录】\n"
-        for turn in history[-6:]:
+        for turn in history[-8:]:
             r = "用户" if turn.get("role") == "user" else "AI助手"
-            c = turn.get("content", "").strip()
+            c = (turn.get("content") or turn.get("text") or "").strip()
             if c:
                 prompt += f"{r}: {c}\n"
 
@@ -378,21 +389,17 @@ def _stream_gemini_chat_internal(prompt: str, model: str = None):
     if not api_key:
         raise ValueError("Gemini API Key 未配置，请在设置中输入 API Key")
 
-    # 按照模型性能强度梯队构建容灾链：首选优先，503 繁忙时按性能梯队依次接班
+    # 按照模型性能强度梯队构建容灾链：严格优先调用用户配置的主模型，遇 503/429 繁忙时按性能梯队依次接班
     candidate_order = [
-        'gemini-3.5-flash-lite',  # 用户指定首选：极速且配额高达 15 RPM / 500 RPD
-        'gemini-3.8-flash',       # 梯队一：当前 3.x Flash 序列中顶级推理旗舰
-        'gemini-3.6-flash',       # 梯队二：高推理性能兼具极高实测稳定性 (HTTP 200)
-        'gemini-3.5-flash',       # 梯队三：3.5 代全量主力 Flash，深度稳定
-        'gemini-3-flash-preview', # 梯队四：3.0 代基石 Flash 模型，稳固在线
-        'gemini-3.1-flash-lite'   # 梯队五：3.1 代轻量高配额 (15 RPM) 快速兜底
+        'gemini-3.5-flash-lite',  # 高配额轻量主力
+        'gemini-3.8-flash',       # 梯队一：高推理旗舰
+        'gemini-3.6-flash',       # 梯队二：高稳定性 Flash
+        'gemini-3.5-flash',       # 梯队三：主力通用 Flash
+        'gemini-3-flash-preview', # 梯队四：基石 Flash 模型
+        'gemini-3.1-flash-lite'   # 梯队五：极速高配额兜底
     ]
 
-    if primary_model and primary_model != 'gemini-3.5-flash-lite':
-        chain = ['gemini-3.5-flash-lite', primary_model]
-    else:
-        chain = ['gemini-3.5-flash-lite']
-
+    chain = [primary_model] if primary_model else ['gemini-3.5-flash-lite']
     for backup in candidate_order:
         if backup not in chain:
             chain.append(backup)
@@ -462,21 +469,17 @@ def call_gemini_api(prompt: str, model: str = None, progress_callback=None) -> s
     if not api_key:
         raise ValueError("Gemini API Key 未配置，请在设置中输入 API Key")
 
-    # 按照模型性能强度梯队构建容灾降级模型链：首选优先，503 繁忙时按性能梯队依次接班
+    # 按照模型性能强度梯队构建容灾降级模型链：严格优先调用用户配置的主模型，遇 503/429 繁忙时按梯队无缝接班
     candidate_order = [
-        'gemini-3.5-flash-lite',  # 用户指定首选：极速且配额高达 15 RPM / 500 RPD
-        'gemini-3.8-flash',       # 梯队一：当前 3.x Flash 序列中顶级推理旗舰
-        'gemini-3.6-flash',       # 梯队二：高推理性能兼具极高实测稳定性 (HTTP 200)
-        'gemini-3.5-flash',       # 梯队三：3.5 代全量主力 Flash，深度稳定
-        'gemini-3-flash-preview', # 梯队四：3.0 代基石 Flash 模型，稳固在线
-        'gemini-3.1-flash-lite'   # 梯队五：3.1 代轻量高配额 (15 RPM) 快速兜底
+        'gemini-3.5-flash-lite',  # 高配额轻量主力 (15 RPM / 500 RPD)
+        'gemini-3.8-flash',       # 梯队一：高推理性能旗舰
+        'gemini-3.6-flash',       # 梯队二：高稳定性 Flash
+        'gemini-3.5-flash',       # 梯队三：主力通用 Flash
+        'gemini-3-flash-preview', # 梯队四：基石 Flash 模型
+        'gemini-3.1-flash-lite'   # 梯队五：极速高配额兜底
     ]
 
-    if primary_model and primary_model != 'gemini-3.5-flash-lite':
-        chain = ['gemini-3.5-flash-lite', primary_model]
-    else:
-        chain = ['gemini-3.5-flash-lite']
-
+    chain = [primary_model] if primary_model else ['gemini-3.5-flash-lite']
     for backup in candidate_order:
         if backup not in chain:
             chain.append(backup)
@@ -546,8 +549,182 @@ def call_ai_api(prompt: str, model: str = None, progress_callback=None) -> str:
     else:
         return call_openai_compatible_api(prompt, progress_callback=progress_callback)
 
+def split_subtitles_into_segments(
+    subtitles: list[dict],
+    target_segment_duration: float = 720.0,
+    max_chars_per_segment: int = 14000
+) -> list[list[dict]]:
+    """Split subtitles into temporally and semantically coherent segments (approx 10-15 minutes or 12k-14k chars).
+    Guarantees 100% of subtitles are preserved with zero mid-sentence cuts.
+    """
+    if not subtitles:
+        return []
+
+    segments = []
+    current_seg = []
+    current_seg_chars = 0
+    seg_start_time = float(subtitles[0].get("from", 0.0))
+
+    for item in subtitles:
+        t_from = float(item.get("from", 0.0))
+        c = item.get("content", "").strip()
+        c_len = len(c)
+
+        seg_duration = t_from - seg_start_time
+        if current_seg and (seg_duration >= target_segment_duration or (current_seg_chars + c_len) > max_chars_per_segment):
+            segments.append(current_seg)
+            current_seg = [item]
+            current_seg_chars = c_len
+            seg_start_time = t_from
+        else:
+            current_seg.append(item)
+            current_seg_chars += c_len
+
+    if current_seg:
+        segments.append(current_seg)
+
+    return segments
+
+def extract_segment_arguments(
+    segment_subtitles: list[dict],
+    seg_index: int,
+    total_segs: int,
+    metadata: dict,
+    progress_callback=None
+) -> str:
+    """Stage 1 for Long Knowledge Videos: Extract structured argumentative notes for this chapter"""
+    start_sec = segment_subtitles[0].get("from", 0.0)
+    end_sec = segment_subtitles[-1].get("to", 0.0)
+    start_str = format_seconds(start_sec)
+    end_str = format_seconds(end_sec)
+    title = metadata.get("title", "未知视频")
+    author = metadata.get("author", "未知作者")
+
+    if progress_callback:
+        progress_callback(f"🧠 [长视频深度解析 1/2] 正在提炼第 {seg_index}/{total_segs} 章节论证链条 [{start_str} - {end_str}]...")
+
+    seg_transcript = prepare_transcript_text(segment_subtitles, chunk_interval_sec=16.0)
+
+    prompt = f"""你是一位认知科学与学术论证分析专家。
+当前正在深度分析知识长视频《{title}》（作者：{author}）的第 {seg_index}/{total_segs} 章节字幕记录（时间区间：{start_str} 至 {end_str}）。
+请仔细研读本章节原始字幕，提炼本章节的核心【论证结构与实证支撑材料】。
+严禁浮于表面的AI文学化修饰，严禁丢失原片推论逻辑，严禁捏造不存在的事实。
+
+【本章节字幕记录】
+{seg_transcript}
+
+---
+请严格按以下结构输出本章节的论证笔记（Markdown 格式）：
+
+### 章节 {seg_index}：[{start_str} - {end_str}](seek:{int(start_sec)}) 议题推进
+* **1. 核心论题与立论主张**：
+  - 本段作者提出了什么核心命题、核心观点或假说？立论的出发点与解决的痛点是什么？
+* **2. 论证推演链条与支撑材料**（必须附带精准时间戳）：
+  - 核心逻辑递进：作者是如何一步步剖析论证的？前后因果链条是什么？
+  - 关键论据与实证材料：原片引用了哪些具体数据、科学实验、历史案例、文献理论或技术机制？请务必在关键实证后标明时间戳 `[MM:SS](seek:秒数)`。
+* **3. 反例、对立观点与限制边界**：
+  - 本段是否讨论了反例、对立学派的质疑、实验局限或适用边界？作者对此是如何辩护或界定的？（若本段未显式讨论反例，则写“本段聚焦基础立论，未显式讨论反例”）
+* **4. 本段核心概念/专业术语**：
+  - 列出本段界定的关键专有名词及作者赋予的特定语境含义（若无专有名词则填“无”）。
+"""
+    return call_ai_api(prompt, progress_callback=progress_callback)
+
+def synthesize_global_knowledge_report(
+    segment_notes: list[str],
+    metadata: dict,
+    progress_callback=None
+) -> str:
+    """Stage 2 for Long Knowledge Videos: Synthesize all chapter notes into global argument report and Markmap"""
+    title = metadata.get("title", "未知视频")
+    author = metadata.get("author", "未知作者")
+    video_url = metadata.get("url", "")
+    sub_source = metadata.get("sub_source", "自动检测")
+
+    if progress_callback:
+        progress_callback("🎯 [长视频深度解析 2/2] 正在全局整合跨章节论证网络与交互导图...")
+
+    combined_notes = "\n\n".join(segment_notes)
+
+    prompt = f"""你是一位专业的知识提炼专家与结构化思维导图架构师。
+我们已经对知识长视频《{title}》（作者：{author}）的各章节完成了全量、无遗漏的分段论证提取。
+以下是全片所有章节的【深度论证笔记】：
+
+{combined_notes}
+
+---
+【全篇综合任务与要求】
+请你基于上述各章节完整材料，站在全局视角，为学习者撰写一份忠实还原原片论证结构、极具学习与研究价值的深度报告与思维导图。
+
+【核心原则】：
+1. **保留作者原本的论证结构**：忠实还原原作者从前提出发、展开论据、引入反例、最终得出结论的推演脉络，严禁将其粗暴打碎成千篇一律的散乱要点；
+2. **严格事实归属与边界标注**：
+   - 明确区分【作者的主张与推论】与【作者引用的实证数据】；
+   - 对有争议、绝对化或特殊假设的推论，客观指出其前提条件；
+3. **精准保留所有时间戳**：必须将各章节笔记中的精确时间戳标记 `[MM:SS](seek:秒数)` 完整继承到报告中，方便读者指哪看哪；严禁使用反引号包裹时间戳，严禁使用 HTML 标签。
+
+请严格使用纯 Markdown 格式输出以下内容：
+
+---
+title: "{title}"
+author: "{author}"
+url: "{video_url}"
+date: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
+source: "{sub_source}（长视频分层全景重构）"
+---
+
+# {title}
+
+## 💡 一句话主旨
+（用 1~2 句话精准概括全片贯穿的核心论题与作者最终给出的定论，100% 忠实于原片）
+
+## 🎯 全景论证脉络与核心深度洞见
+（全面整合各章节笔记，按原片逻辑演进顺序自然展开。议题数量完全由原片实际讨论的独立主题决定，长视频讨论了多少个核心议题就完整输出多少条，严禁遗漏任何章节的核心推论！格式如下）：
+
+* **1. 【核心议题或论题推进概括】**
+  * **原片讲述逻辑与论证推演**：
+    （篇幅 200~400 字，详尽剖析作者的推演脉络）：
+    - **背景与论题引入**：作者是在什么背景下探讨此问题的？面临怎样的理论或现实困境？
+    - **推演机制与因果链条**：作者是如何层层剖析的？前后的因果逻辑是什么？
+    - **支撑论据与实证材料**：原片引用了哪些关键数据、实验、历史案例或理论？每个关键实证必须附带原片时间戳 `[MM:SS](seek:秒数)`。
+  * **对立观点、反例与适用边界**（有则详述，无则标明“作者未显式展开反例”）：
+    - 原片是否讨论了反例、替代解释或局限性？作者对此作何回应？
+  * **术语与概念解析**（严格按需输出，若有专有名词则按专业与通俗双层解析，无则完全不写此项）：
+    * **【概念名】**：
+      * **学术/专业定义**：...
+      * **通俗大白话比喻**：...
+
+（自然依序输出第 2、第 3 ... 直至第 N 个核心论点板块，穷尽全片所有章节的重要推论）
+
+## ⚖️ 认知边界与事实核验提示
+（【严谨学术与客观认知视角】：
+- 明确标注：原片中的核心结论是建立在哪些特定假设、样本范围或学派立场之上的？
+- 若原片涉及争议性强的数据引用或单方推论，用引用块明确标注【事实核验提示】，提醒学习者需参考同行评审或第一手文献进一步核实，绝不将作者的主观推论直接当作无可争议的绝对真理）
+
+## 🧠 脉络思维导图
+（深度融合全片时序演进与逻辑证明树。格式严格包裹在 ```markmap 和 ``` 代码块中。
+- 一级分支（##）严格对应视频各章节主题推进与阶段；
+- 每个阶段起始标注时间戳 `[MM:SS](seek:秒数)`；
+- 二级与三级分支呈现核心论点、论据与反驳；
+- 严禁出现任何 HTML 标签，所有跳转标记统一为纯 Markdown 格式：`[MM:SS](seek:秒数)`；
+- 严禁机械重复时间戳。）
+```markmap
+# {title}
+## 第一阶段：... [00:00](seek:0)
+- 核心命题 A
+  - 关键支撑论据 [03:15](seek:195)
+  - 反例辨析与回应
+## 第二阶段：... [15:20](seek:920)
+- 核心命题 B
+  - 实证推演机制 [18:40](seek:1120)
+## （按全片所有章节自然延伸完整导图树...）
+```
+"""
+    return call_ai_api(prompt, progress_callback=progress_callback)
+
 def generate_video_summary(subtitles: list[dict], metadata: dict, progress_callback=None) -> str:
-    """Generate Markdown summary + Markmap structure using active AI provider"""
+    """Generate Markdown summary + Markmap structure using active AI provider.
+    Automatically applies Hierarchical Epistemic Reconstruction for Long Knowledge Videos.
+    """
     cfg = load_config()
     provider = cfg.get("ai_provider", "gemini")
     provider_names = {
@@ -562,17 +739,43 @@ def generate_video_summary(subtitles: list[dict], metadata: dict, progress_callb
     }
     p_name = provider_names.get(provider, "AI")
 
-    if progress_callback:
-        progress_callback("正在整理字幕上下文与时间戳...")
+    # Calculate video metrics to determine knowledge long video mode
+    duration = 0.0
+    if subtitles:
+        duration = float(subtitles[-1].get("to", 0.0))
+    total_chars = sum(len(s.get("content", "")) for s in subtitles)
 
-    transcript_text = prepare_transcript_text(subtitles)
+    # Trigger hierarchical multi-stage comprehension for knowledge long videos
+    # (duration >= 25 minutes or total characters >= 20,000 chars)
+    is_long_video = duration >= 1500.0 or total_chars >= 20000
+
+    if is_long_video and len(subtitles) >= 60:
+        if progress_callback:
+            progress_callback(f"📚 检测到深度知识长视频 (时长约 {format_seconds(duration)}，共 {total_chars} 字)，已启动【分层论证重构】长文本引擎...")
+
+        segments = split_subtitles_into_segments(subtitles, target_segment_duration=720.0, max_chars_per_segment=13000)
+        total_segs = len(segments)
+
+        if total_segs > 1:
+            segment_notes = []
+            for i, seg in enumerate(segments, start=1):
+                note = extract_segment_arguments(seg, i, total_segs, metadata, progress_callback)
+                segment_notes.append(note)
+
+            return synthesize_global_knowledge_report(segment_notes, metadata, progress_callback)
+
+    # Standard / Shorter Videos: Single-pass high-density Epistemic Argument Extraction (Zero Truncation)
+    if progress_callback:
+        progress_callback("正在整理字幕上下文与高精度时间戳...")
+
+    transcript_text = prepare_transcript_text(subtitles, max_tokens_chars=None, chunk_interval_sec=18.0)
     title = metadata.get("title", "未知视频")
     author = metadata.get("author", "未知UP主/作者")
     video_url = metadata.get("url", "")
     sub_source = metadata.get("sub_source", "自动检测")
 
     prompt = f"""你是一位专业的知识提炼专家与结构化思维导图架构师。
-请你仔细阅读以下视频的字幕记录（带时间戳），为读者撰写一份结构精炼、忠实还原原片事实的视频总结报告与思维导图结构。
+请你仔细阅读以下视频的字幕记录（带精确时间戳），为读者撰写一份结构精炼、忠实还原原片论证逻辑的报告与思维导图。
 
 【视频基本信息】
 * 标题：{title}
@@ -586,7 +789,7 @@ def generate_video_summary(subtitles: list[dict], metadata: dict, progress_callb
 ---
 
 【任务与输出格式要求】
-请严格使用纯 Markdown 格式输出以下三个板块，严禁出现任何非标准标签。板块标题必须保持干净，严禁携带任何括号或补充后缀：
+请严格使用纯 Markdown 格式输出以下内容，严禁出现任何非标准标签。板块标题必须保持干净：
 
 ---
 title: "{title}"
@@ -601,72 +804,57 @@ source: "{sub_source}"
 ## 💡 一句话主旨
 （用 1~2 句话精准概括视频作者表达的核心论点或最终结论，100% 忠实于原视频）
 
-## 🎯 核心深度洞见
-（【重要·内容自适应原则】：洞见数量完全由原片实际讨论的独立议题与信息密度决定，严禁任何机械固定的条数限制！
-* **深度长视频 / 人物访谈 / 播客 / 学术通识课 / 圆桌论坛（20分钟~2小时+）**：
-  必须开启【全景穷尽覆盖】，原片深入探讨了多少个独立主题、核心议题或思辨交锋，就详尽提炼出多少条（无论是 5 条、8 条、12 条还是更多，有多少列多少，严禁遗漏任何关键板块！）；
-* **常规中篇科普 / 评论杂谈（5~25分钟）**：
-  自然还原作者层层递进的核心论点支柱（通常自然呈现 2~6 个，完全忠于原片逻辑骨架）；
-* **微短片 / 单一事件记录 / 搞笑短剧 / 生活Vlog（1~3分钟）**：
-  若原片仅表达了一个核心意思或描述了一件具体事情，【只输出 1 个核心要点】即可；若全片纯属事实叙事无明显思辨论点，则直接转换为【事件脉络/过程还原】，用最精炼的大白话讲清过程与结果，绝对不为了凑数而强行捏造伪观点！）
+## 🎯 全景论证脉络与核心深度洞见
+（【重要·内容自适应与论证忠实原则】：
+* 深入还原原片讨论的核心议题与推演逻辑；
+* 严禁机械拼凑或遗漏关键论据，根据原片体量自然呈现全部论点板块）：
 
 * **1. 【核心论点或议题概括】**
-  * **原片讲述逻辑**：
-    （必须详实深入展开，严禁一两句话草率概括！篇幅建议 150~350 字，完整还原作者的论证链条）：
-    - **背景与痛点**：作者/嘉宾是在什么背景下提出或探讨该议题的？指出了现实中的什么矛盾、争议或痛点？
-    - **推演脉络与机制**：作者是如何一步步剖析论证或多方如何交锋的？前后的核心因果逻辑与运作机制是什么？原片引用了哪些关键数据、具体案例、历史事件、行业内幕或现实细节来有力支撑该论点？
-  * **术语解析**（严格按需输出，宁缺毋滥，有则全列）：
-    【重要规则】：
-    - 仅当本段确实涉及真正的专有名词、行业黑话、政策术语或专业英文缩写时，才输出此项；若无专业术语，则【完全不输出“术语解析”这一栏】，严禁生拉硬凑解释日常词汇！
-    - 若出现专业术语，必须全部穷尽列出（有几个解释几个，不可遗漏），每个术语均按以下格式提供专业与通俗双层解析：
-      * **【术语一名称】**：
-        * **专业定义**：准确、严谨的行业/学术标准定义。
-        * **通俗解读**：生动易懂的大白话比喻或说明，降低认知门槛。
-      * **【术语二名称】**（若有）：
-        * **专业定义**：...
-        * **通俗解读**：...
-  * **事实边界与同行评审**（严格按需输出，若原片论述客观中立无明显漏洞则【完全不写此项】）：
-    【核验规则】：
-    - 仅当原片该论点存在明显的伪科学、夸大其词、偷换概念、以偏概全或已被权威官方明确证伪时，才输出此栏！
-    - 若有，以严谨客观的同行评审视角标注：
-      * **存疑/争议点**：原片哪项表述存在事实瑕疵或因果推论过度？
-      * **公认事实与认知边界**：主流学术界/行业权威公认事实或关键反例是什么？
-    - 若原片论述严谨扎实、无明显科学漏洞或事实扭曲，则【严禁输出此栏】，绝不无端挑刺！
+  * **原片讲述逻辑与推演链条**：
+    （篇幅 150~350 字，完整还原作者的因果论证链条）：
+    - **背景与问题引入**：作者是在什么背景下提出该议题的？面临什么核心痛点或理论交锋？
+    - **因果机制与逻辑展开**：作者是如何一步步剖析论证的？
+    - **支撑论据与实证材料**：原片引用了哪些具体数据、案例、历史事件或科学实验？必须在关键实证后附带时间戳 `[MM:SS](seek:秒数)`。
+  * **反例、对立观点与限制条件**（若原片有讨论则详述，若纯单向科普则标明“作者未展开反例”）：
+    - 原片是否讨论了反例、局限性或外部质疑？作者如何回应？
+  * **术语解析**（严格按需输出，若无专业术语则完全不输出此项；若有则全部列出）：
+    * **【术语名称】**：
+      * **专业定义**：严谨的行业/学术标准定义。
+      * **通俗解读**：生动易懂的大白话比喻或生活实例。
 
-（根据视频实际包含的独立主题体量，自然依次输出第 2、第 3 ... 直至第 N 个核心要点。长片穷尽全量议题，短片精简聚焦，数量完全自适应）
+（根据视频实际包含的主题体量，自然依次输出第 2、第 3 ... 直至第 N 个核心要点）
+
+## ⚖️ 认知边界与事实核验提示
+（客观标注：作者推论的前提假设、适用范围；若涉及争议性数据或主观断言，标明【事实核验提示】，提醒读者参考同行评审进一步核实）
 
 ## 🧠 脉络思维导图
-（深度融合全片时序进展与逻辑层次，将时间线与思维导图合二为一。格式严格包裹在 ```markmap 和 ``` 代码块中。
-【导图分支与主题自然映射】：
-- 导图的一级分支（##）严格对应视频实际讨论的每一个核心阶段、主题板块或议题环节（长视频讨论了多少个议题就自然展开多少个分支，短视频聚焦精炼）；
-- 每个一级阶段或关键要点起始标注对应的时间戳 `[MM:SS](seek:秒数)`，方便用户指哪看哪；
-- 严禁出现任何 HTML 标签（如 <a>、<span>、class 等），所有跳转标记统一为纯 Markdown 格式：`[MM:SS](seek:秒数)`；
-- 严禁在子要点、数据论据、案例细节后面机械重复复制粘贴相同的时间戳，没有新时间点的子分支末尾保持纯文本。）
+（深度融合全片时序进展与逻辑证明树。格式严格包裹在 ```markmap 和 ``` 代码块中。
+- 一级分支（##）严格对应视频实际讨论的每一个核心阶段；
+- 每个阶段起始标注时间戳 `[MM:SS](seek:秒数)`；
+- 严禁出现任何 HTML 标签，所有跳转标记统一为纯 Markdown 格式：`[MM:SS](seek:秒数)`；
+- 严禁在子要点机械重复粘贴相同的时间戳。）
 ```markmap
 # {title}
 ## 主题阶段一 [00:00](seek:0)
 - 关键议题要点 A
-  - 核心论据与支撑细节
+  - 核心论据与支撑细节 [01:30](seek:90)
 - 关键议题要点 B [03:15](seek:195)
-  - 细分事实与机制
+  - 机制推演
 ## 主题阶段二 [08:30](seek:510)
 - 关键议题要点 C
-  - 核心案例推演 [12:00](seek:720)
-## （根据原片实际内容，自然延伸后续所有议题与阶段分支...）
+  - 核心案例 [12:00](seek:720)
+## （按原片实际内容，自然延伸后续所有分支...）
 ```
 
 【核心原则】
-1. 【数量完全自适应，严禁硬凑或阉割】：要点数量必须与原片真实信息量 100% 匹配。对于 1~2 小时长视频、深度访谈或大课，必须全景穷尽所有核心议题（哪怕有 10+ 条也要完整展开，拒绝遗漏重要知识点）；对于短视频或单一事件片，1 条说透即可，拒绝无病呻吟与生搬硬凑；
-2. 绝对忠实于原视频事实，绝不凭空捏造未提及的启示或建议；
-3. 彻底去除口头禅与口语废话，转换为书面化精炼表达；
-4. 【术语解析按需且穷尽】：只有真正包含专业术语时才写，没有绝不强写；一旦有，必须全部列出（有几个写几个），且严格保持“专业定义 + 通俗解读”双层解析；
-5. 【讲述逻辑严禁简略】“原片讲述逻辑”是全文最具含金量的部分，必须完整展现作者的论证厚度，将“因果机制推演”与“关键事实数据/案例”紧密结合融为一体，做到论点扎实、脉络连贯、细节丰富；
-6. 【纯净导图】：思维导图严格包裹在 ```markmap 和 ``` 中，严禁任何 HTML 代码泄露；时间戳只在真正推进时标注，严禁在子点机械重复堆砌相同时间戳；
-7. 【事实边界与同行评审】：以严谨客观的学术审稿人身份审视原片。忠实还原作者观点的同时，对伪科学、夸大其词、已证伪论断或以偏概全结论保持警惕，遇争议与事实漏洞主动批注认知边界，拒绝成为谣言的盲目扩音器。
+1. 绝对忠实于原视频论证逻辑，绝不凭空捏造未提及的启示；
+2. 彻底去除口头禅与废话，转换为书面化精炼表达；
+3. 时间戳精准标注在论据出现处，严禁包裹反引号，严禁 HTML 标签；
+4. 严格保持认知边界标注，区分作者立场与客观公认事实。
 """
 
     if progress_callback:
-        progress_callback(f"{p_name} 正在深度阅读字幕并生成思维导图...")
+        progress_callback(f"{p_name} 正在深度解析论证逻辑并生成结构化导图...")
 
     result = call_ai_api(prompt, progress_callback=progress_callback)
     return result

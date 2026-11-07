@@ -80,14 +80,31 @@ def log_system_event(msg: str):
 
 app = FastAPI(title="Video Summary & Mindmap Studio API")
 
-# Enable CORS for browser extension
+# Enable CORS restricted strictly to extension protocols (Chrome, Edge, Firefox) and local loopback hosts
+ALLOWED_ORIGIN_REGEX = r"^(chrome-extension://.*|moz-extension://.*|http://(localhost|127\.0\.0\.1)(:\d+)?)$"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def security_origin_guard(request, call_next):
+    """Enforce strict origin verification: disallow external public websites from accessing local API"""
+    origin = request.headers.get("origin")
+    if origin:
+        is_extension = origin.startswith("chrome-extension://") or origin.startswith("moz-extension://")
+        is_local = "127.0.0.1" in origin or "localhost" in origin
+        if not (is_extension or is_local):
+            log_system_event(f"🚨 安全拦截: 拒绝来自未受信任网页域名的非法跨源访问 [{origin}] -> {request.url.path}")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"status": "forbidden", "message": "安全限制：仅允许本地浏览器插件或本地环境访问调度后台，严禁外部第三方网页跨域访问。"}
+            )
+    return await call_next(request)
 
 # In-memory store for task states and SSE queues
 tasks: Dict[str, Dict[str, Any]] = {}
@@ -315,8 +332,18 @@ def diagnose_env():
     }
 
 @app.get("/api/config")
-def get_config():
-    return load_config()
+def get_config(mask: bool = False):
+    cfg = load_config()
+    if mask:
+        masked_cfg = dict(cfg)
+        for key in ["gemini_api_key", "custom_api_key"]:
+            val = masked_cfg.get(key, "")
+            if val and len(val) > 8:
+                masked_cfg[key] = val[:4] + "***" + val[-4:]
+            elif val:
+                masked_cfg[key] = "***"
+        return masked_cfg
+    return cfg
 
 @app.post("/api/config")
 def update_config(req: ConfigRequest):

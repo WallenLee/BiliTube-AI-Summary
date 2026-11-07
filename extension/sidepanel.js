@@ -2052,10 +2052,10 @@ async function sendChatMessage(userText, quote = "") {
     renderChatMarkdown(fullAssistantText, assistantContentEl, false);
     chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 
-    // Record round in conversation history
+    // Record round in conversation history (guarantee both content and text fields for backend compatibility)
     const recordedUserPrompt = activeQuote ? `[引用片段: "${activeQuote}"]\n${query}` : query;
-    chatHistory.push({ role: "user", text: recordedUserPrompt });
-    chatHistory.push({ role: "assistant", text: fullAssistantText });
+    chatHistory.push({ role: "user", text: recordedUserPrompt, content: recordedUserPrompt });
+    chatHistory.push({ role: "assistant", text: fullAssistantText, content: fullAssistantText });
 
     saveSessionState();
     updateSaveButtonsState();
